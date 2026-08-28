@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.2
+ * Version: 1.0.3
  * Author: Veng Haber
  */
 
@@ -771,10 +771,10 @@ function veng_oh_settings_page() {
 	}
 
 	if ( isset( $_POST['veng_oh_enforce_cap'] ) && check_admin_referer( 'veng_oh_settings' ) ) {
-		// Elle tetiklenen temizlik — toplu SQL kullanıyor ama yine de tek istekte 200'le sınırlı,
-		// hâlâ fazlaysa butona tekrar basman yeterli.
-		$deleted = veng_oh_enforce_post_cap( 3000, 200 );
-		echo '<div class="notice notice-success"><p>' . intval( $deleted ) . ' en eski otomatik haber silindi. Hâlâ 3000 üstündeyse butona tekrar bas.</p></div>';
+		// Elle tetiklenen temizlik — sınırsız (0'a kadar), toplu SQL kullanıyor ama yine de
+		// tek istekte 200'le sınırlı, hâlâ otomatik haber varsa butona tekrar basman yeterli.
+		$deleted = veng_oh_enforce_post_cap( 0, 200 );
+		echo '<div class="notice notice-success"><p>' . intval( $deleted ) . ' otomatik haber silindi. Hâlâ otomatik haber kaldıysa butona tekrar bas.</p></div>';
 	}
 
 	$api_key = get_option( 'veng_oh_anthropic_api_key', '' );
@@ -821,10 +821,10 @@ function veng_oh_settings_page() {
 				<button type="submit" name="veng_oh_backfill_alt" class="button">Eski Görsellere Alt Metin Doldur</button>
 				<button type="submit" name="veng_oh_backfill_images" class="button">Eksik Görselleri Tespit Et ve Yükle</button>
 				<button type="submit" name="veng_oh_backfill_attribution" class="button">Kaynak Notunu Sadeleştir</button>
-				<button type="submit" name="veng_oh_enforce_cap" class="button">Fazla Haberleri Şimdi Sil (3000 sınırı)</button>
+				<button type="submit" name="veng_oh_enforce_cap" class="button">Tüm Otomatik Haberleri Şimdi Sil</button>
 			</p>
 		</form>
-		<p class="description">"Eski Görsellere Alt Metin Doldur": geçmiş bir hata yüzünden otomatik çekilen haberlerin görsellerinde alt metin (SEO/erişilebilirlik için) hiç ayarlanmıyordu. Bu düzeltildi, yeni haberler otomatik alt metinle geliyor — bu buton geçmiş haberleri de tek seferde doldurur.<br>"Eksik Görselleri Tespit Et ve Yükle": öne çıkan görseli hiç olmayan otomatik haberleri bulur, kaynak makale linkine tekrar gidip görseli indirmeyi dener.<br>"Kaynak Notunu Sadeleştir": eski "...habere git" linkli kaynak notunu sade "Güncel Haber Kaynak: X" ile değiştirir.<br>"Fazla Haberleri Şimdi Sil": otomatik çekilen haberler 3000'i geçtiyse en eskilerini siler — elle yazdığın haberlere hiç dokunmaz, sadece <code>_veng_source_name</code> meta'sı olanlara (yani botun eklediklerine) bakar. Bu zaten her 15 dakikalık taramada kendiliğinden de çalışır, bu buton sadece hemen istersen.</p>
+		<p class="description">"Eski Görsellere Alt Metin Doldur": geçmiş bir hata yüzünden otomatik çekilen haberlerin görsellerinde alt metin (SEO/erişilebilirlik için) hiç ayarlanmıyordu. Bu düzeltildi, yeni haberler otomatik alt metinle geliyor — bu buton geçmiş haberleri de tek seferde doldurur.<br>"Eksik Görselleri Tespit Et ve Yükle": öne çıkan görseli hiç olmayan otomatik haberleri bulur, kaynak makale linkine tekrar gidip görseli indirmeyi dener.<br>"Kaynak Notunu Sadeleştir": eski "...habere git" linkli kaynak notunu sade "Güncel Haber Kaynak: X" ile değiştirir.<br>"Tüm Otomatik Haberleri Şimdi Sil": sınır yok, botun çektiği tüm haberleri siler (en eskiden başlayarak) — elle yazdığın haberlere hiç dokunmaz, sadece <code>_veng_source_name</code> meta'sı olanlara (yani botun eklediklerine) bakar.</p>
 
 		<h2>Durum</h2>
 		<p><strong>Toplam otomatik haber:</strong> <?php echo esc_html( number_format_i18n( $auto_post_count ) ); ?> / 3.000<?php echo $auto_post_count > 3000 ? ' <span style="color:#991b1b;font-weight:700;">— sınır aşıldı, en yakın taramada otomatik temizlenecek</span>' : ''; ?></p>
