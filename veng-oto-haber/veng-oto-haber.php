@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.3
+ * Version: 1.0.4
  * Author: Veng Haber
  */
 
@@ -530,8 +530,6 @@ function veng_oh_run_import() {
 		'lines'   => $lines,
 	) );
 
-	veng_oh_enforce_post_cap();
-
 	return $created;
 }
 add_action( 'veng_oh_import_event', 'veng_oh_run_import' );
@@ -827,7 +825,7 @@ function veng_oh_settings_page() {
 		<p class="description">"Eski Görsellere Alt Metin Doldur": geçmiş bir hata yüzünden otomatik çekilen haberlerin görsellerinde alt metin (SEO/erişilebilirlik için) hiç ayarlanmıyordu. Bu düzeltildi, yeni haberler otomatik alt metinle geliyor — bu buton geçmiş haberleri de tek seferde doldurur.<br>"Eksik Görselleri Tespit Et ve Yükle": öne çıkan görseli hiç olmayan otomatik haberleri bulur, kaynak makale linkine tekrar gidip görseli indirmeyi dener.<br>"Kaynak Notunu Sadeleştir": eski "...habere git" linkli kaynak notunu sade "Güncel Haber Kaynak: X" ile değiştirir.<br>"Tüm Otomatik Haberleri Şimdi Sil": sınır yok, botun çektiği tüm haberleri siler (en eskiden başlayarak) — elle yazdığın haberlere hiç dokunmaz, sadece <code>_veng_source_name</code> meta'sı olanlara (yani botun eklediklerine) bakar.</p>
 
 		<h2>Durum</h2>
-		<p><strong>Toplam otomatik haber:</strong> <?php echo esc_html( number_format_i18n( $auto_post_count ) ); ?> / 3.000<?php echo $auto_post_count > 3000 ? ' <span style="color:#991b1b;font-weight:700;">— sınır aşıldı, en yakın taramada otomatik temizlenecek</span>' : ''; ?></p>
+		<p><strong>Toplam otomatik haber:</strong> <?php echo esc_html( number_format_i18n( $auto_post_count ) ); ?> (sınır yok — fazlaysa "Tüm Otomatik Haberleri Şimdi Sil" ile elle temizleyebilirsin)</p>
 		<?php if ( $last ) : ?>
 			<p><strong>Son tarama:</strong> <?php echo esc_html( $last['time'] ); ?> — <?php echo intval( $last['created'] ); ?> yeni haber eklendi.</p>
 			<ul>
