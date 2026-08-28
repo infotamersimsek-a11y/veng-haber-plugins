@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.1
+ * Version: 1.0.2
  * Author: Veng Haber
  */
 
@@ -544,20 +544,12 @@ add_action( 'veng_oh_import_event', 'veng_oh_run_import' );
  * her çağrıda en fazla $batch_size işlenir, çağıran taraf "posts" boş dönene kadar
  * tekrar tekrar çağırır (bkz. veng_oh_maybe_run_pending_wipe).
  */
-function veng_oh_wipe_all_auto_content( $batch_size = 500 ) {
+/**
+ * Verilen yazı ID'lerini (ve öne çıkan görsellerini) toplu SQL ile siler — wp_delete_post()
+ * döngüsü binlerce kayıtta çok yavaş kalıp 500/502 hatasına yol açıyordu, bu çok daha hızlı.
+ */
+function veng_oh_bulk_delete_posts( $post_ids ) {
 	global $wpdb;
-	if ( function_exists( 'set_time_limit' ) ) {
-		@set_time_limit( 0 );
-	}
-
-	$post_ids = $wpdb->get_col( $wpdb->prepare(
-		"SELECT p.ID FROM {$wpdb->posts} p
-		 INNER JOIN {$wpdb->postmeta} m ON m.post_id = p.ID AND m.meta_key = %s
-		 WHERE p.post_type IN ('post','makale') LIMIT %d",
-		'_veng_source_name',
-		$batch_size
-	) );
-
 	if ( empty( $post_ids ) ) {
 		return array( 'posts' => 0, 'attachments' => 0, 'files' => 0 );
 	}
@@ -591,7 +583,7 @@ function veng_oh_wipe_all_auto_content( $batch_size = 500 ) {
 		}
 	}
 
-	$post_chunks = array_chunk( $post_ids, 500 );
+	$post_chunks = array_chunk( $post_ids, 200 );
 	foreach ( $post_chunks as $chunk ) {
 		$list = implode( ',', array_map( 'intval', $chunk ) );
 		$wpdb->query( "DELETE FROM {$wpdb->postmeta} WHERE post_id IN ({$list})" );
@@ -601,7 +593,7 @@ function veng_oh_wipe_all_auto_content( $batch_size = 500 ) {
 	}
 
 	if ( ! empty( $attachment_ids ) ) {
-		$att_chunks = array_chunk( $attachment_ids, 500 );
+		$att_chunks = array_chunk( $attachment_ids, 200 );
 		foreach ( $att_chunks as $chunk ) {
 			$list = implode( ',', array_map( 'intval', $chunk ) );
 			$wpdb->query( "DELETE FROM {$wpdb->postmeta} WHERE post_id IN ({$list})" );
@@ -609,15 +601,34 @@ function veng_oh_wipe_all_auto_content( $batch_size = 500 ) {
 		}
 	}
 
-	veng_oh_log( 'Tam temizlik: ' . count( $post_ids ) . ' otomatik haber, ' . count( $attachment_ids ) . ' görsel (' . $files_deleted . ' dosya) silindi.' );
-
 	return array( 'posts' => count( $post_ids ), 'attachments' => count( $attachment_ids ), 'files' => $files_deleted );
+}
+
+function veng_oh_wipe_all_auto_content( $batch_size = 200 ) {
+	global $wpdb;
+	if ( function_exists( 'set_time_limit' ) ) {
+		@set_time_limit( 0 );
+	}
+
+	$post_ids = $wpdb->get_col( $wpdb->prepare(
+		"SELECT p.ID FROM {$wpdb->posts} p
+		 INNER JOIN {$wpdb->postmeta} m ON m.post_id = p.ID AND m.meta_key = %s
+		 WHERE p.post_type IN ('post','makale') LIMIT %d",
+		'_veng_source_name',
+		$batch_size
+	) );
+
+	$result = veng_oh_bulk_delete_posts( $post_ids );
+	if ( $result['posts'] > 0 ) {
+		veng_oh_log( 'Tam temizlik: ' . $result['posts'] . ' otomatik haber, ' . $result['attachments'] . ' görsel (' . $result['files'] . ' dosya) silindi.' );
+	}
+	return $result;
 }
 
 /**
  * Yeni yüklenen eklenti kodu çalıştığında (sen buton falan tıklamadan, sadece wp-admin'e
  * her girişte) otomatik haberleri parça parça temizler — tek istekte binlercesini silmeye
- * çalışmak zayıf sunucuda 502'ye yol açtı, bu yüzden her sayfa girişinde en fazla 500
+ * çalışmak zayıf sunucuda 502/500'e yol açtı, bu yüzden her sayfa girişinde en fazla 200
  * işlenir, sayaç (option) üstünde birikir, hepsi bitince bayrak set edilip durur.
  * Aktivasyon isteğinin kendisinde çalışmaz (o istek zaten kırılgan) — sonraki normal
  * sayfa yüklemelerinde devam eder.
@@ -630,7 +641,7 @@ function veng_oh_maybe_run_pending_wipe() {
 		return;
 	}
 
-	$result = veng_oh_wipe_all_auto_content( 500 );
+	$result = veng_oh_wipe_all_auto_content( 200 );
 
 	$cumulative = get_option( 'veng_oh_full_wipe_v1_result' );
 	if ( ! is_array( $cumulative ) ) {
@@ -651,10 +662,10 @@ add_action( 'plugins_loaded', 'veng_oh_maybe_run_pending_wipe' );
 /**
  * Otomatik çekilen haberler toplamı belli bir sayıyı geçmesin diye en eskilerini siler.
  * SADECE '_veng_source_name' meta'sı olan (yani otomatik çekilmiş) yazılara dokunur —
- * elle yazılmış haberler asla silinmez. Tek seferde en fazla $batch_size siler (sunucuyu
- * boğmamak için), her cron çalışmasında biraz daha temizler.
+ * elle yazılmış haberler asla silinmez. Toplu SQL kullanır (veng_oh_bulk_delete_posts),
+ * tek seferde en fazla $batch_size siler (sunucuyu boğmamak için).
  */
-function veng_oh_enforce_post_cap( $max_posts = 3000, $batch_size = 300 ) {
+function veng_oh_enforce_post_cap( $max_posts = 3000, $batch_size = 200 ) {
 	if ( function_exists( 'set_time_limit' ) ) {
 		@set_time_limit( 0 );
 	}
@@ -679,11 +690,9 @@ function veng_oh_enforce_post_cap( $max_posts = 3000, $batch_size = 300 ) {
 		'order'          => 'ASC',
 		'fields'         => 'ids',
 	) );
-	foreach ( $ids as $id ) {
-		wp_delete_post( $id, true );
-	}
-	veng_oh_log( "Otomatik haber sınırı ({$max_posts}) aşılmıştı, {$total} kayıttan " . count( $ids ) . ' en eski otomatik haber silindi.' );
-	return count( $ids );
+	$result = veng_oh_bulk_delete_posts( $ids );
+	veng_oh_log( "Otomatik haber sınırı ({$max_posts}) aşılmıştı, {$total} kayıttan " . $result['posts'] . ' en eski otomatik haber silindi.' );
+	return $result['posts'];
 }
 
 function veng_oh_cron_schedules( $schedules ) {
@@ -762,10 +771,10 @@ function veng_oh_settings_page() {
 	}
 
 	if ( isset( $_POST['veng_oh_enforce_cap'] ) && check_admin_referer( 'veng_oh_settings' ) ) {
-		// Elle tetiklenen tek seferlik temizlik — görsel işleme yok, sadece DB silme, bu yüzden
-		// aktivasyondaki gibi 502 riski yok; tüm fazlalığı tek tıkla temizler.
-		$deleted = veng_oh_enforce_post_cap( 3000, 20000 );
-		echo '<div class="notice notice-success"><p>' . intval( $deleted ) . ' en eski otomatik haber silindi.</p></div>';
+		// Elle tetiklenen temizlik — toplu SQL kullanıyor ama yine de tek istekte 200'le sınırlı,
+		// hâlâ fazlaysa butona tekrar basman yeterli.
+		$deleted = veng_oh_enforce_post_cap( 3000, 200 );
+		echo '<div class="notice notice-success"><p>' . intval( $deleted ) . ' en eski otomatik haber silindi. Hâlâ 3000 üstündeyse butona tekrar bas.</p></div>';
 	}
 
 	$api_key = get_option( 'veng_oh_anthropic_api_key', '' );
