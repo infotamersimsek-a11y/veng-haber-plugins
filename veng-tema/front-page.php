@@ -1,5 +1,7 @@
 <?php get_header(); ?>
 
+<?php veng_render_special_day_banner(); ?>
+
 <div class="container layout">
 	<div style="min-width:0;">
 

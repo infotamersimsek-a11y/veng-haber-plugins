@@ -3,6 +3,37 @@
  * Şablon yardımcıları: kartlar, hava durumu, piyasa verisi, paylaşım, sayfalama
  */
 
+/**
+ * Özel gün afiş sliderı: belirli bir tarih aralığında sitenin en üstünde döngülü banner
+ * gösterir, aralık dışında hiçbir şey basmaz (elle kaldırmaya gerek kalmaz).
+ */
+function veng_render_special_day_banner() {
+	$start = '2026-09-01';
+	$end   = '2026-09-02';
+	$today = current_time( 'Y-m-d' );
+	if ( $today < $start || $today > $end ) {
+		return;
+	}
+
+	$uri = VENG_THEME_URI . '/assets/1-eylul/';
+	$slides = array(
+		array( 'src' => $uri . 'banner-1.webp', 'alt' => '1 Eylül Dünya Barış Günü kutlu olsun' ),
+		array( 'src' => $uri . 'banner-2.webp', 'alt' => '1 Îlonê Roja Aştîyê ya Dinya pîroz be' ),
+		array( 'src' => $uri . 'banner-3.webp', 'alt' => '1 Êlule Roja Aştîyê ya Cîhanê pîroz be' ),
+		array( 'src' => $uri . 'banner-4.gif', 'alt' => '1 Eylül Dünya Barış Günü kutlu olsun' ),
+	);
+	?>
+	<div class="peace-day-banner" id="veng-peace-banner">
+		<div class="peace-day-slides">
+			<?php foreach ( $slides as $i => $s ) : ?>
+				<img src="<?php echo esc_url( $s['src'] ); ?>" alt="<?php echo esc_attr( $s['alt'] ); ?>" class="peace-day-slide<?php echo 0 === $i ? ' active' : ''; ?>" loading="<?php echo 0 === $i ? 'eager' : 'lazy'; ?>" />
+			<?php endforeach; ?>
+		</div>
+		<div class="peace-day-caption">1 Eylül Dünya Barış Günü Kutlu Olsun</div>
+	</div>
+	<?php
+}
+
 function veng_time_ago( $timestamp ) {
 	$diff = time() - $timestamp;
 	if ( $diff < 60 ) return 'az önce';
