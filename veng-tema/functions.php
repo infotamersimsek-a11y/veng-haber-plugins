@@ -15,7 +15,7 @@ if ( file_exists( __DIR__ . '/puc/plugin-update-checker.php' ) ) {
 	$veng_tema_update_checker = YahnisElsts\PluginUpdateChecker\v5\PucFactory::buildUpdateChecker(
 		'https://github.com/infotamersimsek-a11y/veng-haber-plugins/',
 		__FILE__,
-		'veng-tema'
+		'veng'
 	);
 	$veng_tema_update_checker->setBranch( 'main' );
 	$veng_tema_update_checker->getVcsApi()->enableReleaseAssets( '/^veng-tema\.zip$/' );
