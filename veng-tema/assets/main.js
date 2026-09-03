@@ -191,20 +191,6 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   }
 
-  // Özel gün afiş sliderı: 4 saniyede bir sıradaki görsele geçer.
-  var peaceBanner = document.getElementById('veng-peace-banner');
-  if (peaceBanner) {
-    var peaceSlides = peaceBanner.querySelectorAll('.peace-day-slide');
-    var peaceIndex = 0;
-    if (peaceSlides.length > 1) {
-      setInterval(function () {
-        peaceSlides[peaceIndex].classList.remove('active');
-        peaceIndex = (peaceIndex + 1) % peaceSlides.length;
-        peaceSlides[peaceIndex].classList.add('active');
-      }, 4000);
-    }
-  }
-
   // Başa dön butonu: belli bir kaydırma miktarından sonra görünür, tıklayınca yumuşak kaydırma.
   var backToTop = document.getElementById('veng-back-to-top');
   if (backToTop) {
