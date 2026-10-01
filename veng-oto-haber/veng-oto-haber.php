@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.5
+ * Version: 1.0.6
  * Author: Veng Haber
  */
 
@@ -12,6 +12,11 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 // Sunucuyu yormamak için günlük en fazla bu kadar haber eklenir.
 define( 'VENG_OH_DAILY_CAP', 50 );
+// Saat başı çalışan taramada en fazla bu kadar yeni haber eklenir.
+define( 'VENG_OH_RUN_CAP', 3 );
+// Haberler sadece bu saat aralığında (site saatine göre) çekilir.
+define( 'VENG_OH_ACTIVE_HOUR_START', 6 );
+define( 'VENG_OH_ACTIVE_HOUR_END', 22 );
 
 // Otomatik güncelleme: GitHub'daki paylaşılan depoyu kontrol eder, "Güncelleme mevcut" bildirimini
 // wp-admin'de gösterir — artık zip indirip elle yüklemeye gerek yok.
@@ -509,16 +514,25 @@ function veng_oh_run_import() {
 		@set_time_limit( 0 );
 	}
 
+	$hour = (int) current_time( 'G' );
+	if ( $hour < VENG_OH_ACTIVE_HOUR_START || $hour >= VENG_OH_ACTIVE_HOUR_END ) {
+		update_option( 'veng_oh_last_run', array(
+			'time'    => current_time( 'mysql' ),
+			'created' => 0,
+			'lines'   => array( 'Çalışma saatleri dışında (06:00–22:00), tarama atlandı.' ),
+		) );
+		return 0;
+	}
+
 	$items_per_feed = 5;
-	$created = 0;
 	$lines = array();
 	$daily = veng_oh_get_daily_count();
 
+	// 1. Aşama: tüm kaynaklardan henüz eklenmemiş aday haberleri topla (hiçbirini
+	// henüz yazmadan) — böylece hangisinin önemli olduğuna, sadece ilk bulunana
+	// değil, tüm adaylara bakarak karar verilebilir.
+	$candidates = array();
 	foreach ( veng_oh_feeds() as $feed ) {
-		if ( $daily['count'] >= VENG_OH_DAILY_CAP ) {
-			$lines[] = 'Günlük sınıra (' . VENG_OH_DAILY_CAP . ') ulaşıldı, kalan kaynaklar atlandı.';
-			break;
-		}
 		$res = wp_remote_get( $feed['url'], array(
 			'timeout'    => 15,
 			'user-agent' => 'Mozilla/5.0 (compatible; VengHaberBot/1.0; +https://venghaber.com)',
@@ -535,18 +549,39 @@ function veng_oh_run_import() {
 			$parser = 'veng_oh_parse_rudaw_embedded';
 		}
 		$items = array_slice( $parser( wp_remote_retrieve_body( $res ) ), 0, $items_per_feed );
-		$feed_created = 0;
+		$feed_candidates = 0;
 		foreach ( $items as $item ) {
-			if ( $daily['count'] >= VENG_OH_DAILY_CAP ) {
-				break;
+			if ( veng_oh_already_imported( $item['link'] ) ) {
+				continue;
 			}
-			if ( veng_oh_import_item( $item, $feed ) ) {
-				$feed_created++;
-				$created++;
-				$daily['count']++;
-			}
+			$candidates[] = array( 'item' => $item, 'feed' => $feed );
+			$feed_candidates++;
 		}
-		$lines[] = $feed['source'] . '/' . $feed['category'] . ': ' . $feed_created . ' yeni';
+		$lines[] = $feed['source'] . '/' . $feed['category'] . ': ' . $feed_candidates . ' aday';
+	}
+
+	$slots = min( VENG_OH_RUN_CAP, VENG_OH_DAILY_CAP - $daily['count'] );
+	if ( $slots <= 0 ) {
+		$lines[] = 'Günlük sınıra (' . VENG_OH_DAILY_CAP . ') ulaşıldı, bu çalışmada haber eklenmedi.';
+		update_option( 'veng_oh_last_run', array( 'time' => current_time( 'mysql' ), 'created' => 0, 'lines' => $lines ) );
+		return 0;
+	}
+
+	// 2. Aşama: aday sayısı sınırdan fazlaysa, hangi 3'ünün yazılacağına editöryel
+	// önem sırasına göre karar ver (bkz. veng_oh_pick_important_candidates) —
+	// aksi halde sadece ilk bulunan 3 haber seçilir, önemli bir gelişme feed
+	// sırasında geç geldiği için o saat tamamen atlanabilirdi.
+	$chosen = count( $candidates ) > $slots
+		? veng_oh_pick_important_candidates( $candidates, $slots )
+		: $candidates;
+
+	$created = 0;
+	foreach ( $chosen as $c ) {
+		if ( veng_oh_import_item( $c['item'], $c['feed'] ) ) {
+			$created++;
+			$daily['count']++;
+			$lines[] = 'Seçildi: ' . $c['feed']['source'] . ' — ' . mb_substr( $c['item']['title'], 0, 80 );
+		}
 	}
 
 	update_option( 'veng_oh_daily_count', $daily );
@@ -560,6 +595,84 @@ function veng_oh_run_import() {
 	return $created;
 }
 add_action( 'veng_oh_import_event', 'veng_oh_run_import' );
+
+/**
+ * Aday haber listesinden editöryel açıdan en öncelikli $limit taneyi seçer — tek bir
+ * Anthropic çağrısıyla tüm adayları birlikte değerlendirip numaralarını ister. API
+ * anahtarı yoksa ya da yanıt ayrıştırılamazsa, listedeki ilk $limit adaya düşer
+ * (akışı asla kesmez).
+ */
+function veng_oh_pick_important_candidates( $candidates, $limit ) {
+	$fallback = array_slice( $candidates, 0, $limit );
+
+	$api_key = get_option( 'veng_oh_anthropic_api_key' );
+	if ( ! $api_key ) {
+		return $fallback;
+	}
+
+	$list = '';
+	foreach ( $candidates as $i => $c ) {
+		$list .= ( $i + 1 ) . ') [' . $c['feed']['source'] . '] ' . $c['item']['title'];
+		if ( ! empty( $c['item']['summary'] ) ) {
+			$list .= ' — ' . mb_substr( $c['item']['summary'], 0, 150 );
+		}
+		$list .= "\n";
+	}
+
+	$prompt = "Aşağıda bu saat içinde yayına aday " . count( $candidates ) . " haber başlığı var. Bunlardan editöryel açıdan en öncelikli {$limit} taneyi seç.\n\n"
+		. "Öncelik ver: can kaybı/yaralanma, patlama/saldırı/afet, geniş kitleyi etkileyen resmi karar/açıklama (yargı, ekonomi, seçim, güvenlik), bölgeyi (Diyarbakır ve çevresi, Kürt bölgesi) doğrudan ilgilendiren gelişmeler.\n"
+		. "Düşük öncelik ver: rutin spor sonucu, magazin, tekrar eden/az bilgi içeren haberler.\n\n"
+		. $list . "\n"
+		. "Sadece seçtiğin {$limit} haberin numaralarını JSON dizisi olarak döndür, başka hiçbir şey yazma: {\"picks\": [3, 7, 1]}";
+
+	$res = wp_remote_post( 'https://api.anthropic.com/v1/messages', array(
+		'timeout' => 30,
+		'headers' => array(
+			'content-type'      => 'application/json',
+			'x-api-key'         => $api_key,
+			'anthropic-version' => '2023-06-01',
+		),
+		'body'    => wp_json_encode( array(
+			'model'      => 'claude-sonnet-5',
+			'max_tokens' => 256,
+			'messages'   => array( array( 'role' => 'user', 'content' => $prompt ) ),
+		) ),
+	) );
+
+	if ( is_wp_error( $res ) || wp_remote_retrieve_response_code( $res ) !== 200 ) {
+		veng_oh_log( 'Önem sıralama isteği başarısız, ilk ' . $limit . ' aday kullanılıyor.' );
+		return $fallback;
+	}
+
+	$data = json_decode( wp_remote_retrieve_body( $res ), true );
+	$text = '';
+	foreach ( (array) ( $data['content'] ?? array() ) as $block ) {
+		if ( isset( $block['type'] ) && 'text' === $block['type'] ) {
+			$text = $block['text'];
+			break;
+		}
+	}
+	if ( ! preg_match( '/\{[\s\S]*\}/', $text, $m ) ) {
+		return $fallback;
+	}
+	$parsed = json_decode( $m[0], true );
+	if ( empty( $parsed['picks'] ) || ! is_array( $parsed['picks'] ) ) {
+		return $fallback;
+	}
+
+	$picked = array();
+	foreach ( $parsed['picks'] as $n ) {
+		$idx = (int) $n - 1;
+		if ( isset( $candidates[ $idx ] ) ) {
+			$picked[] = $candidates[ $idx ];
+		}
+		if ( count( $picked ) >= $limit ) {
+			break;
+		}
+	}
+
+	return $picked ? $picked : $fallback;
+}
 
 /**
  * Otomatik çekilmiş haberleri ve görsellerini kalıcı olarak siler — SADECE
@@ -735,25 +848,31 @@ function veng_oh_enforce_post_cap( $max_posts = 3000, $batch_size = 200 ) {
 	return $result['posts'];
 }
 
-function veng_oh_cron_schedules( $schedules ) {
-	$schedules['veng_oh_fifteen_minutes'] = array(
-		'interval' => 15 * MINUTE_IN_SECONDS,
-		'display'  => 'Her 15 Dakikada Bir (Veng Oto Haber)',
-	);
-	return $schedules;
-}
-add_filter( 'cron_schedules', 'veng_oh_cron_schedules' );
-
 function veng_oh_activate() {
 	if ( ! wp_next_scheduled( 'veng_oh_import_event' ) ) {
 		// Zamanı "şimdi" vermek ilk taramayı hemen "vadesi geldi" yapar — senkron çalıştırmaya
 		// gerek yok, dışarıdan kurulan cron ping (cron-job.org/UptimeRobot) birkaç dakika
 		// içinde wp-cron.php'yi tetikleyip bunu otomatik çalıştırır. Aktivasyon isteğinin
 		// kendi içinde ağır işi senkron yapmak, zayıf sunucularda 502/zaman aşımına yol açıyordu.
-		wp_schedule_event( time(), 'veng_oh_fifteen_minutes', 'veng_oh_import_event' );
+		wp_schedule_event( time(), 'hourly', 'veng_oh_import_event' );
 	}
 }
 register_activation_hook( __FILE__, 'veng_oh_activate' );
+
+/**
+ * Zaten aktif kurulumlarda eski 15 dakikalık zamanlama hâlâ kayıtlı duruyor —
+ * eklenti güncellemesi activation hook'unu tekrar tetiklemiyor, bu yüzden bir
+ * kerelik burada eskisini iptal edip 'hourly' ile yeniden kuruyoruz.
+ */
+function veng_oh_migrate_to_hourly_schedule() {
+	if ( '1' === get_option( 'veng_oh_hourly_migration_done' ) ) {
+		return;
+	}
+	wp_clear_scheduled_hook( 'veng_oh_import_event' );
+	wp_schedule_event( time(), 'hourly', 'veng_oh_import_event' );
+	update_option( 'veng_oh_hourly_migration_done', '1' );
+}
+add_action( 'plugins_loaded', 'veng_oh_migrate_to_hourly_schedule', 5 );
 
 function veng_oh_deactivate() {
 	$timestamp = wp_next_scheduled( 'veng_oh_import_event' );
@@ -870,6 +989,7 @@ function veng_oh_settings_page() {
 		<h2>Durum</h2>
 		<p><strong>Toplam otomatik haber:</strong> <?php echo esc_html( number_format_i18n( $auto_post_count ) ); ?> (sınır yok — fazlaysa "Tüm Otomatik Haberleri Şimdi Sil" ile elle temizleyebilirsin)</p>
 		<p><strong>Bugün eklenen:</strong> <?php echo esc_html( number_format_i18n( $daily_count['count'] ) ); ?> / <?php echo esc_html( number_format_i18n( VENG_OH_DAILY_CAP ) ); ?> (sunucuyu yormamak için günlük sınır, gece yarısı sıfırlanır)</p>
+		<p><strong>Çalışma sıklığı:</strong> saat başı, her çalışmada en fazla <?php echo esc_html( VENG_OH_RUN_CAP ); ?> haber, sadece <?php echo esc_html( VENG_OH_ACTIVE_HOUR_START ); ?>:00–<?php echo esc_html( VENG_OH_ACTIVE_HOUR_END ); ?>:00 arası (adaylar arasından en önemlileri AI ile seçilir)</p>
 		<?php if ( $last ) : ?>
 			<p><strong>Son tarama:</strong> <?php echo esc_html( $last['time'] ); ?> — <?php echo intval( $last['created'] ); ?> yeni haber eklendi.</p>
 			<ul>
