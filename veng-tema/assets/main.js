@@ -9,6 +9,54 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   }
 
+  // Manşet slider: 5sn'de bir otomatik geçer, noktaya tıklayınca oraya atlar (sayaç sıfırlanır),
+  // üzerine gelince durur, dokunmatikte sağa/sola kaydırmayı destekler.
+  var heroSlider = document.getElementById('heroSlider');
+  if (heroSlider) {
+    var heroSlides = heroSlider.querySelectorAll('.hero-slide');
+    var heroDots = heroSlider.querySelectorAll('.hero-dot');
+    var heroCurrent = 0;
+    var heroTimer = null;
+    var HERO_INTERVAL = 5000;
+
+    function heroGoTo(index) {
+      heroSlides[heroCurrent].classList.remove('is-active');
+      heroDots[heroCurrent].classList.remove('is-active');
+      heroCurrent = (index + heroSlides.length) % heroSlides.length;
+      heroSlides[heroCurrent].classList.add('is-active');
+      heroDots[heroCurrent].classList.add('is-active');
+    }
+    function heroStartAuto() {
+      heroStopAuto();
+      heroTimer = setInterval(function () { heroGoTo(heroCurrent + 1); }, HERO_INTERVAL);
+    }
+    function heroStopAuto() {
+      if (heroTimer) { clearInterval(heroTimer); heroTimer = null; }
+    }
+
+    if (heroSlides.length > 1) {
+      heroDots.forEach(function (dot) {
+        dot.addEventListener('click', function () {
+          heroGoTo(parseInt(dot.getAttribute('data-slide'), 10));
+          heroStartAuto();
+        });
+      });
+      heroSlider.addEventListener('mouseenter', heroStopAuto);
+      heroSlider.addEventListener('mouseleave', heroStartAuto);
+
+      var heroTouchX = null;
+      heroSlider.addEventListener('touchstart', function (e) { heroTouchX = e.touches[0].clientX; }, { passive: true });
+      heroSlider.addEventListener('touchend', function (e) {
+        if (heroTouchX === null) return;
+        var diff = e.changedTouches[0].clientX - heroTouchX;
+        if (Math.abs(diff) > 40) { heroGoTo(heroCurrent + (diff < 0 ? 1 : -1)); heroStartAuto(); }
+        heroTouchX = null;
+      }, { passive: true });
+
+      heroStartAuto();
+    }
+  }
+
   var searchBtn = document.getElementById('veng-search-toggle');
   var searchBox = document.getElementById('veng-searchbox');
   if (searchBtn && searchBox) {

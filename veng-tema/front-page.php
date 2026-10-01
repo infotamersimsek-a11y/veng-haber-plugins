@@ -5,44 +5,7 @@
 
 		<h1 class="sr-only"><?php bloginfo( 'name' ); ?><?php echo get_bloginfo( 'description' ) ? ' — ' . esc_html( get_bloginfo( 'description' ) ) : ' — Güncel Haberler'; ?></h1>
 
-		<?php veng_render_latest_headlines_strip(); ?>
-
-		<?php
-		// "Öne Çıkan" etiketi süresiz geçerliydi — biri aylar önce bir haberi etiketleyip
-		// unutunca o haber kalıcı olarak en üstte kalıyor, yeni haberler hiç görünmüyordu.
-		// Artık öne çıkan etiketi sadece SON 2 GÜN içinde konmuşsa dikkate alınır, aksi halde
-		// doğrudan en güncel haberler gösterilir.
-		$featured_q = new WP_Query( array(
-			'post_type' => 'post', 'posts_per_page' => 5,
-			'tax_query' => array( array( 'taxonomy' => 'rozet', 'field' => 'slug', 'terms' => 'one-cikan' ) ),
-			'date_query' => array( array( 'after' => '2 days ago' ) ),
-		) );
-		if ( ! $featured_q->have_posts() ) {
-			$featured_q = new WP_Query( array( 'post_type' => 'post', 'posts_per_page' => 5 ) );
-		}
-		$posts = $featured_q->posts;
-		$main = $posts[0] ?? null;
-		$side = array_slice( $posts, 1, 4 );
-		?>
-
-		<?php if ( $main ) : $cats = get_the_category( $main->ID ); ?>
-		<section class="hero">
-			<a class="hero-main" href="<?php echo esc_url( get_permalink( $main ) ); ?>">
-				<?php echo veng_render_thumb( $main->ID, 'veng-card' ); ?>
-				<div class="hero-overlay">
-					<div>
-						<?php if ( $cats ) : ?><span class="badge"><?php echo esc_html( $cats[0]->name ); ?></span><?php endif; ?>
-						<h2><?php echo esc_html( get_the_title( $main ) ); ?></h2>
-					</div>
-				</div>
-			</a>
-			<div style="display:flex;flex-direction:column;gap:16px;">
-				<?php foreach ( $side as $p ) : veng_render_hcard( $p->ID ); endforeach; ?>
-			</div>
-		</section>
-		<?php endif; wp_reset_postdata(); ?>
-
-		<?php veng_ad_slot( 'Reklam Alanı · 728×90' ); ?>
+		<?php veng_render_hero_slider(); ?>
 
 		<?php
 		// orderby=id yalnızca en eski oluşturulan 6 kategoriyi gösteriyordu. orderby=count da

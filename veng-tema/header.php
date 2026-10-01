@@ -44,7 +44,12 @@
 		</form>
 	</div>
 
-	<?php // veng_render_breaking_ticker(); — geçici olarak devre dışı: mobilde tüm sayfayı kaplama bug'ı bildirildi. ?>
+	<?php
+	// Önceden mobilde tüm sayfayı kaplama bug'ı yüzünden kapatılmıştı — yükseklik artık
+	// hem masaüstü hem mobil için kilitli (height/max-height/min-height + overflow:hidden),
+	// taşma ihtimali kalmadı. Referans sitedeki yatay "SON DAKİKA" şeridiyle aynı mantık.
+	veng_render_breaking_ticker();
+	?>
 
 	<?php veng_render_mobile_info_ticker(); ?>
 

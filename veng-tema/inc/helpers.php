@@ -45,18 +45,17 @@ function veng_render_hcard( $post_id ) {
 	<?php
 }
 
+/** Kart: görsel üstte, rozet+başlık+tarih altta (referans sitedeki .card/.card-body deseni). */
 function veng_render_gcard( $post_id ) {
 	$cats = get_the_category( $post_id );
 	?>
 	<a class="gcard" href="<?php echo esc_url( get_permalink( $post_id ) ); ?>">
-		<div class="gcard-thumb">
-			<?php echo veng_render_thumb( $post_id, 'veng-card', array( 'loading' => 'lazy' ) ); ?>
-			<div class="gcard-overlay">
-				<?php if ( $cats ) : ?><span class="gcard-cat"><?php echo esc_html( $cats[0]->name ); ?></span><?php endif; ?>
-				<h3><?php echo esc_html( get_the_title( $post_id ) ); ?></h3>
-			</div>
+		<div class="gcard-thumb"><?php echo veng_render_thumb( $post_id, 'veng-card', array( 'loading' => 'lazy' ) ); ?></div>
+		<div class="gcard-body">
+			<?php if ( $cats ) : ?><span class="badge"><?php echo esc_html( $cats[0]->name ); ?></span><?php endif; ?>
+			<h3><?php echo esc_html( get_the_title( $post_id ) ); ?></h3>
+			<time><?php echo esc_html( veng_time_ago( get_post_time( 'U', false, $post_id ) ) ); ?></time>
 		</div>
-		<div class="meta" style="font-size:12px;color:var(--muted);margin-top:6px;"><?php echo esc_html( veng_time_ago( get_post_time( 'U', false, $post_id ) ) ); ?></div>
 	</a>
 	<?php
 }
@@ -166,24 +165,37 @@ function veng_get_market_rates() {
 	return $rates;
 }
 
-/** Anasayfa üstü "Son Dakika" listesi: en yeni haberler, saatiyle, dikey liste halinde. */
-function veng_render_latest_headlines_strip( $count = 8 ) {
+/**
+ * Anasayfa manşet slider'ı: en yeni N haberi tek seferde bir tane gösteren, nokta
+ * navigasyonlu, 5 saniyede bir otomatik geçen tam genişlik slider (referans sitedeki
+ * #heroSlider deseni birebir). Dönme mantığı assets/main.js içinde.
+ */
+function veng_render_hero_slider( $count = 8 ) {
 	$posts = get_posts( array( 'post_type' => 'post', 'posts_per_page' => $count, 'orderby' => 'date', 'order' => 'DESC' ) );
 	if ( ! $posts ) {
 		return;
 	}
 	?>
-	<div class="headlines-strip">
-		<div class="headlines-strip-label"><span class="headlines-dot"></span>Son Dakika</div>
-		<div class="headlines-strip-list">
-			<?php foreach ( $posts as $p ) : ?>
-				<a href="<?php echo esc_url( get_permalink( $p ) ); ?>">
-					<span class="headlines-time"><?php echo esc_html( date_i18n( 'H:i', get_post_time( 'U', false, $p ) ) ); ?></span>
-					<span class="headlines-title"><?php echo esc_html( get_the_title( $p ) ); ?></span>
+	<section class="hero">
+		<div class="hero-slider" id="heroSlider">
+			<?php foreach ( $posts as $i => $p ) : $cats = get_the_category( $p->ID ); ?>
+				<a href="<?php echo esc_url( get_permalink( $p ) ); ?>" class="hero-slide<?php echo 0 === $i ? ' is-active' : ''; ?>">
+					<?php echo veng_render_thumb( $p->ID, 'veng-card', array( 'loading' => 0 === $i ? 'eager' : 'lazy' ) ); ?>
+					<div class="hero-slide-text">
+						<?php if ( $cats ) : ?><span class="badge"><?php echo esc_html( $cats[0]->name ); ?></span><?php endif; ?>
+						<h2><?php echo esc_html( get_the_title( $p ) ); ?></h2>
+					</div>
 				</a>
 			<?php endforeach; ?>
+			<?php if ( count( $posts ) > 1 ) : ?>
+			<div class="hero-dots" role="tablist" aria-label="Manşet haberleri">
+				<?php foreach ( $posts as $i => $p ) : ?>
+					<button type="button" class="hero-dot<?php echo 0 === $i ? ' is-active' : ''; ?>" data-slide="<?php echo intval( $i ); ?>" aria-label="<?php echo esc_attr( ( $i + 1 ) . '. manşet: ' . get_the_title( $p ) ); ?>"><?php echo intval( $i + 1 ); ?></button>
+				<?php endforeach; ?>
+			</div>
+			<?php endif; ?>
 		</div>
-	</div>
+	</section>
 	<?php
 }
 
