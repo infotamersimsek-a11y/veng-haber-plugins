@@ -235,11 +235,13 @@ function veng_render_breaking_ticker() {
 	$track = implode( '', $items );
 	?>
 	<div class="breaking-ticker">
-		<span class="breaking-label">Son Dakika</span>
-		<div class="ticker-viewport">
-			<div class="ticker-track">
-				<span class="ticker-group"><?php echo $track; ?></span>
-				<span class="ticker-group" aria-hidden="true"><?php echo $track; ?></span>
+		<div class="container breaking-ticker-inner">
+			<span class="breaking-label">Son Dakika</span>
+			<div class="ticker-viewport">
+				<div class="ticker-track">
+					<span class="ticker-group"><?php echo $track; ?></span>
+					<span class="ticker-group" aria-hidden="true"><?php echo $track; ?></span>
+				</div>
 			</div>
 		</div>
 	</div>
