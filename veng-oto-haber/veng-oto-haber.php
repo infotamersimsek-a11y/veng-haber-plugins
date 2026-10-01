@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.13
+ * Version: 1.0.14
  * Author: Veng Haber
  */
 
@@ -310,6 +310,34 @@ function veng_oh_editorial_rewrite( $item, $source ) {
 	return $parsed;
 }
 
+/**
+ * Tüm kaynaklar (feed'ler) sadece 'dunya'/'gundem' kategorisine işaretli — bu yüzden
+ * ekonomi/spor/teknoloji/sağlık gibi diğer kategoriler hiç dolmuyordu. Başlık+özette
+ * geçen anahtar kelimelere bakarak haberi gerçekte ait olduğu kategoriye yönlendirir;
+ * eşleşme yoksa feed'in varsayılan kategorisinde kalır. Haber uydurmaz, sadece gerçek
+ * içeriği doğru rafa koyar.
+ */
+function veng_oh_classify_category_slug( $title, $summary, $default_slug ) {
+	$text = mb_strtolower( $title . ' ' . $summary, 'UTF-8' );
+	$rules = array(
+		'ekonomi'      => array( 'dolar', 'euro', 'borsa', 'enflasyon', 'faiz', 'ekonomi', 'zam', ' tl ', 'lira', 'merkez bankası', 'ihracat', 'ithalat', 'piyasa', 'asgari ücret' ),
+		'spor'         => array( 'futbol', ' maç', 'süper lig', 'galatasaray', 'fenerbahçe', 'beşiktaş', 'transfer', 'şampiyon', 'basketbol', 'voleybol', 'milli takım', 'teknik direktör' ),
+		'teknoloji'    => array( 'yapay zeka', 'teknoloji', 'akıllı telefon', 'uygulama', 'yazılım', 'siber', 'apple', 'google', 'microsoft', 'bilgisayar', 'internet sitesi' ),
+		'saglik'       => array( 'sağlık bakanlığı', 'hastane', 'doktor', 'aşı', 'virüs', 'salgın', 'ilaç', 'tedavi', 'covid', 'ameliyat' ),
+		'siyaset'      => array( 'meclis', 'seçim', 'cumhurbaşkanı', 'bakanı', 'parti', 'ak parti', 'chp', 'mhp', 'dem parti', 'hükümet', 'vekil', 'anayasa' ),
+		'kultur-sanat' => array( 'sinema', 'film', 'tiyatro', 'sanat', 'müze', 'festival', 'roman', 'sergi', 'konser' ),
+		'magazin'      => array( 'ünlü', 'magazin', 'evlendi', 'boşandı', 'oyuncusu', 'şarkıcı' ),
+	);
+	foreach ( $rules as $slug => $keywords ) {
+		foreach ( $keywords as $kw ) {
+			if ( false !== mb_strpos( $text, $kw ) ) {
+				return $slug;
+			}
+		}
+	}
+	return $default_slug;
+}
+
 function veng_oh_import_item( $item, $feed ) {
 	if ( veng_oh_already_imported( $item['link'] ) ) {
 		return false;
@@ -325,7 +353,8 @@ function veng_oh_import_item( $item, $feed ) {
 		}
 	}
 
-	$category = get_category_by_slug( $feed['category'] );
+	$category_slug = veng_oh_classify_category_slug( $item['title'], $item['summary'], $feed['category'] );
+	$category = get_category_by_slug( $category_slug );
 	$title = $item['title'];
 	$excerpt = mb_substr( $item['summary'], 0, 300 );
 	$body_html = '<p>' . esc_html( $excerpt ) . '</p>';
@@ -815,6 +844,110 @@ function veng_oh_force_disable_date_cleanup() {
 add_action( 'plugins_loaded', 'veng_oh_force_disable_date_cleanup', 1 );
 
 /**
+ * ACİL TEK SEFERLİK DOLDURMA: yanlışlıkla silinen içeriğin yerine, her ana sayfa
+ * kategorisinde en az 6 haber olacak şekilde mevcut RSS kaynaklarından GERÇEK haber
+ * çeker (uydurma yok) — anahtar kelime sınıflandırmasıyla (veng_oh_classify_category_slug)
+ * doğru kategoriye yerleştirir. Her AI yeniden-yazma çağrısı birkaç saniye sürdüğü için
+ * tek istekte az sayıda (6) işlenir, sayfa yüklemesi başına devam eder. 15 denemeden
+ * sonra ya da bir turda hiç ilerleme olmazsa durur (bazı kategoriler için yeterli
+ * kaynak bulunamayabilir, sonsuz döngüye girmesin).
+ */
+function veng_oh_category_needs( $min = 6 ) {
+	$slugs = array( 'dunya', 'gundem', 'ekonomi', 'siyaset', 'spor', 'teknoloji', 'saglik', 'kultur-sanat', 'magazin', 'yasam' );
+	$needs = array();
+	foreach ( $slugs as $slug ) {
+		$cat = get_category_by_slug( $slug );
+		if ( ! $cat ) {
+			continue;
+		}
+		if ( (int) $cat->count < $min ) {
+			$needs[ $slug ] = $min - (int) $cat->count;
+		}
+	}
+	return $needs;
+}
+
+function veng_oh_run_emergency_category_fill( $max_imports_per_run = 6 ) {
+	if ( function_exists( 'set_time_limit' ) ) {
+		@set_time_limit( 0 );
+	}
+	$needs = veng_oh_category_needs( 6 );
+	if ( empty( $needs ) ) {
+		return array( 'created' => 0, 'done' => true );
+	}
+
+	$created = 0;
+	foreach ( veng_oh_feeds() as $feed ) {
+		if ( $created >= $max_imports_per_run ) {
+			break;
+		}
+		$res = wp_remote_get( $feed['url'], array(
+			'timeout'    => 15,
+			'user-agent' => 'Mozilla/5.0 (compatible; VengHaberBot/1.0; +https://venghaber.com)',
+		) );
+		if ( is_wp_error( $res ) || wp_remote_retrieve_response_code( $res ) !== 200 ) {
+			continue;
+		}
+		$type = $feed['type'] ?? 'rss';
+		$parser = 'veng_oh_parse_feed';
+		if ( 'newssitemap' === $type ) {
+			$parser = 'veng_oh_parse_newssitemap';
+		} elseif ( 'rudaw_embedded' === $type ) {
+			$parser = 'veng_oh_parse_rudaw_embedded';
+		}
+		$items = array_slice( $parser( wp_remote_retrieve_body( $res ) ), 0, 25 );
+		foreach ( $items as $item ) {
+			if ( $created >= $max_imports_per_run ) {
+				break;
+			}
+			if ( veng_oh_already_imported( $item['link'] ) ) {
+				continue;
+			}
+			$slug = veng_oh_classify_category_slug( $item['title'], $item['summary'], $feed['category'] );
+			if ( ! isset( $needs[ $slug ] ) || $needs[ $slug ] <= 0 ) {
+				continue;
+			}
+			if ( veng_oh_import_item( $item, $feed ) ) {
+				$created++;
+				$needs[ $slug ]--;
+				if ( $needs[ $slug ] <= 0 ) {
+					unset( $needs[ $slug ] );
+				}
+			}
+		}
+	}
+
+	return array( 'created' => $created, 'done' => empty( $needs ) );
+}
+
+function veng_oh_maybe_run_emergency_fill() {
+	if ( ! is_admin() || '1' === get_option( 'veng_oh_emergency_fill_2026_10_done' ) ) {
+		return;
+	}
+	if ( isset( $_GET['action'] ) && 'activate' === $_GET['action'] ) {
+		return;
+	}
+
+	// Her haber 1 AI çağrısı içeriyor (birkaç saniye) — sayfa yüklemesi başına az sayıda
+	// (3) işlenir, zayıf sunucuda 502 riskine girmemek için. 25 denemeyle toplamda
+	// potansiyel 75 habere kadar çıkabilir, 10 kategori × 6 hedefini rahatça karşılar.
+	$attempts = (int) get_option( 'veng_oh_emergency_fill_2026_10_attempts', 0 );
+	$result = veng_oh_run_emergency_category_fill( 3 );
+	$attempts++;
+	update_option( 'veng_oh_emergency_fill_2026_10_attempts', $attempts );
+
+	$cumulative = (int) get_option( 'veng_oh_emergency_fill_2026_10_created', 0 );
+	$cumulative += $result['created'];
+	update_option( 'veng_oh_emergency_fill_2026_10_created', $cumulative );
+	update_option( 'veng_oh_emergency_fill_2026_10_time', current_time( 'mysql' ) );
+
+	if ( $result['done'] || 0 === $result['created'] || $attempts >= 25 ) {
+		update_option( 'veng_oh_emergency_fill_2026_10_done', '1' );
+	}
+}
+add_action( 'plugins_loaded', 'veng_oh_maybe_run_emergency_fill' );
+
+/**
  * Günlük sınır (50) devreye girerken mevcut tüm otomatik haberler sıfırdan baştan
  * temizleniyor — v1 temizliği zaten tamamlanmış kurulumlarda da bir kerelik tekrar
  * tetiklemek için v1 bayrağını sıfırlar, var olan parça parça temizleme mekanizması
@@ -927,6 +1060,16 @@ function veng_oh_settings_page() {
 			echo '<div class="notice notice-success"><p><strong>1 günden eski yazı temizliği tamamlandı</strong> (' . esc_html( $date_cleanup_result['time'] ) . '): toplam ' . intval( $date_cleanup_result['posts'] ) . ' yazı ve ' . intval( $date_cleanup_result['attachments'] ) . ' görsel silindi. Son 24 saatteki haberler dokunulmadan duruyor.</p></div>';
 		} else {
 			echo '<div class="notice notice-warning"><p><strong>1 günden eski yazılar temizleniyor…</strong> Şu ana kadar ' . intval( $date_cleanup_result['posts'] ) . ' yazı silindi. Bu sayfayı birkaç kez yenile, otomatik devam edecek.</p></div>';
+		}
+	}
+
+	$fill_created = (int) get_option( 'veng_oh_emergency_fill_2026_10_created', 0 );
+	$fill_done = '1' === get_option( 'veng_oh_emergency_fill_2026_10_done' );
+	if ( $fill_created > 0 || $fill_done ) {
+		if ( $fill_done ) {
+			echo '<div class="notice notice-success"><p><strong>Acil kategori doldurma tamamlandı:</strong> toplam ' . $fill_created . ' gerçek haber, kategorisine göre sınıflandırılıp eklendi. Hâlâ az haberli kategori varsa, o konuda yeterli kaynak bulunamadı demektir.</p></div>';
+		} else {
+			echo '<div class="notice notice-warning"><p><strong>Kategoriler dolduruluyor…</strong> Şu ana kadar ' . $fill_created . ' haber eklendi. Bu sayfayı birkaç kez yenile, otomatik devam edecek.</p></div>';
 		}
 	}
 
