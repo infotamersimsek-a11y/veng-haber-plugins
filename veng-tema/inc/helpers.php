@@ -173,8 +173,9 @@ function veng_get_market_rates() {
  * navigasyonlu, 5 saniyede bir otomatik geçen tam genişlik slider (referans sitedeki
  * #heroSlider deseni birebir). Dönme mantığı assets/main.js içinde.
  */
+/** Görseli olmayan yazıyı hero'da göstermek boş gradyan kutu gibi görünüyordu (küçük kartlarda sorun değil, tam ekran slide'da kötü) — bu yüzden hero SADECE öne çıkan görseli olan yazılardan seçilir. */
 function veng_render_hero_slider( $count = 20 ) {
-	$posts = get_posts( array( 'post_type' => 'post', 'posts_per_page' => $count, 'orderby' => 'date', 'order' => 'DESC' ) );
+	$posts = get_posts( array( 'post_type' => 'post', 'posts_per_page' => $count, 'orderby' => 'date', 'order' => 'DESC', 'meta_key' => '_thumbnail_id' ) );
 	if ( ! $posts ) {
 		return;
 	}
