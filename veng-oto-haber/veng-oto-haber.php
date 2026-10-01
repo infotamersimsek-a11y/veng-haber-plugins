@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.15
+ * Version: 1.0.16
  * Author: Veng Haber
  */
 
@@ -772,6 +772,95 @@ function veng_oh_bulk_delete_posts( $post_ids ) {
 	return array( 'posts' => count( $post_ids ), 'attachments' => count( $attachment_ids ), 'files' => $files_deleted );
 }
 
+/**
+ * Sahipsiz medya: hiçbir yazının öne çıkan görseli olmayan VE var olan bir yazıya
+ * bağlı olmayan (post_parent'ı 0 ya da artık var olmayan bir yazıya işaret eden)
+ * görseller. Logo/site ikonu gibi aktif kullanılan görseller açıkça hariç tutulur.
+ * ÖNEMLİ: Geçen seferki tarih-bazlı silme beklenenden çok fazlasını sildiği için,
+ * bu fonksiyon SADECE SAYAR — hiçbir şeyi otomatik silmez. Silme ayrı, kullanıcının
+ * elle bastığı bir butonla, burada gösterilen sayıyı gördükten sonra yapılır.
+ */
+/** Sorgu binlerce medyada ağır olabilir — her sayfa yüklemesinde çalışmasın diye 10 dk önbelleklenir. */
+function veng_oh_count_orphaned_media_cached() {
+	$cached = get_transient( 'veng_oh_orphaned_media_count' );
+	if ( false !== $cached ) {
+		return $cached;
+	}
+	$result = veng_oh_count_orphaned_media();
+	// $ids transient'e yazılmaz (ID listesi büyük olabilir) — sadece sayı/boyut cache'lenir,
+	// gerçek silme butonuna basıldığında taze sorgu yeniden çalışır.
+	set_transient( 'veng_oh_orphaned_media_count', array( 'count' => $result['count'], 'bytes' => $result['bytes'] ), 10 * MINUTE_IN_SECONDS );
+	return array( 'count' => $result['count'], 'bytes' => $result['bytes'] );
+}
+
+function veng_oh_count_orphaned_media() {
+	global $wpdb;
+	$protected = array_filter( array(
+		(int) get_theme_mod( 'custom_logo' ),
+		(int) get_option( 'site_icon' ),
+	) );
+	$protected_sql = empty( $protected ) ? '0' : implode( ',', array_map( 'intval', $protected ) );
+
+	$ids = $wpdb->get_col(
+		"SELECT p.ID FROM {$wpdb->posts} p
+		 WHERE p.post_type = 'attachment'
+		 AND p.ID NOT IN ({$protected_sql})
+		 AND NOT EXISTS (
+		     SELECT 1 FROM {$wpdb->postmeta} m
+		     WHERE m.meta_key = '_thumbnail_id' AND m.meta_value = p.ID
+		 )
+		 AND (
+		     p.post_parent = 0
+		     OR NOT EXISTS ( SELECT 1 FROM {$wpdb->posts} parent WHERE parent.ID = p.post_parent )
+		 )"
+	);
+
+	$total_bytes = 0;
+	foreach ( $ids as $aid ) {
+		$file = get_attached_file( $aid );
+		if ( $file && file_exists( $file ) ) {
+			$total_bytes += filesize( $file );
+		}
+	}
+
+	return array( 'ids' => $ids, 'count' => count( $ids ), 'bytes' => $total_bytes );
+}
+
+/** Yukarıdaki fonksiyonun bulduğu sahipsiz medyayı kalıcı olarak siler (dosya + kayıt). */
+function veng_oh_delete_orphaned_media( $ids ) {
+	global $wpdb;
+	if ( function_exists( 'set_time_limit' ) ) {
+		@set_time_limit( 0 );
+	}
+	$files_deleted = 0;
+	foreach ( $ids as $aid ) {
+		$file = get_attached_file( $aid );
+		if ( $file && file_exists( $file ) ) {
+			$dir = dirname( $file );
+			$meta = wp_get_attachment_metadata( $aid );
+			if ( ! empty( $meta['sizes'] ) ) {
+				foreach ( $meta['sizes'] as $s ) {
+					$sf = $dir . '/' . $s['file'];
+					if ( file_exists( $sf ) ) {
+						@unlink( $sf );
+					}
+				}
+			}
+			@unlink( $file );
+			$files_deleted++;
+		}
+	}
+	if ( ! empty( $ids ) ) {
+		$chunks = array_chunk( $ids, 200 );
+		foreach ( $chunks as $chunk ) {
+			$list = implode( ',', array_map( 'intval', $chunk ) );
+			$wpdb->query( "DELETE FROM {$wpdb->postmeta} WHERE post_id IN ({$list})" );
+			$wpdb->query( "DELETE FROM {$wpdb->posts} WHERE ID IN ({$list})" );
+		}
+	}
+	return array( 'deleted' => count( $ids ), 'files' => $files_deleted );
+}
+
 function veng_oh_wipe_all_auto_content( $batch_size = 200 ) {
 	global $wpdb;
 	if ( function_exists( 'set_time_limit' ) ) {
@@ -1120,6 +1209,17 @@ function veng_oh_settings_page() {
 		echo '<div class="notice notice-success"><p>' . intval( $deleted ) . ' otomatik haber silindi. Hâlâ otomatik haber kaldıysa butona tekrar bas.</p></div>';
 	}
 
+	if ( isset( $_POST['veng_oh_delete_orphaned_media'] ) && check_admin_referer( 'veng_oh_settings' ) ) {
+		// Tek istekte binlercesini silmeye çalışmak zayıf sunucuda 502'ye yol açar — diğer
+		// silme butonlarıyla aynı desen: en fazla 200/tık, kalan varsa tekrar basılır.
+		$orphans = veng_oh_count_orphaned_media();
+		$batch = array_slice( $orphans['ids'], 0, 200 );
+		$result = veng_oh_delete_orphaned_media( $batch );
+		delete_transient( 'veng_oh_orphaned_media_count' );
+		$remaining = $orphans['count'] - $result['deleted'];
+		echo '<div class="notice notice-success"><p>' . intval( $result['files'] ) . ' sahipsiz görsel silindi.' . ( $remaining > 0 ? ' Hâlâ ' . intval( $remaining ) . ' tane kaldı, butona tekrar bas.' : ' Hepsi temizlendi.' ) . '</p></div>';
+	}
+
 	$api_key = get_option( 'veng_oh_anthropic_api_key', '' );
 	$auto_publish = get_option( 'veng_oh_auto_publish', '1' ) === '1';
 	$last = get_option( 'veng_oh_last_run' );
@@ -1177,9 +1277,13 @@ function veng_oh_settings_page() {
 				<button type="submit" name="veng_oh_backfill_images" class="button">Eksik Görselleri Tespit Et ve Yükle</button>
 				<button type="submit" name="veng_oh_backfill_attribution" class="button">Kaynak Notunu Sadeleştir</button>
 				<button type="submit" name="veng_oh_enforce_cap" class="button">Tüm Otomatik Haberleri Şimdi Sil</button>
+				<?php $orphans = veng_oh_count_orphaned_media_cached(); ?>
+				<?php if ( $orphans['count'] > 0 ) : ?>
+					<button type="submit" name="veng_oh_delete_orphaned_media" class="button" onclick="return confirm('<?php echo esc_js( number_format_i18n( $orphans['count'] ) ); ?> sahipsiz görsel (yaklaşık <?php echo esc_js( size_format( $orphans['bytes'] ) ); ?>) kalıcı olarak silinecek. Emin misin?' );">Sahipsiz Görselleri Sil (<?php echo esc_html( number_format_i18n( $orphans['count'] ) ); ?>, ~<?php echo esc_html( size_format( $orphans['bytes'] ) ); ?>)</button>
+				<?php endif; ?>
 			</p>
 		</form>
-		<p class="description">"Eski Görsellere Alt Metin Doldur": geçmiş bir hata yüzünden otomatik çekilen haberlerin görsellerinde alt metin (SEO/erişilebilirlik için) hiç ayarlanmıyordu. Bu düzeltildi, yeni haberler otomatik alt metinle geliyor — bu buton geçmiş haberleri de tek seferde doldurur.<br>"Eksik Görselleri Tespit Et ve Yükle": öne çıkan görseli hiç olmayan otomatik haberleri bulur, kaynak makale linkine tekrar gidip görseli indirmeyi dener.<br>"Kaynak Notunu Sadeleştir": eski "...habere git" linkli kaynak notunu sade "Güncel Haber Kaynak: X" ile değiştirir.<br>"Tüm Otomatik Haberleri Şimdi Sil": sınır yok, botun çektiği tüm haberleri siler (en eskiden başlayarak) — elle yazdığın haberlere hiç dokunmaz, sadece <code>_veng_source_name</code> meta'sı olanlara (yani botun eklediklerine) bakar.</p>
+		<p class="description">"Eski Görsellere Alt Metin Doldur": geçmiş bir hata yüzünden otomatik çekilen haberlerin görsellerinde alt metin (SEO/erişilebilirlik için) hiç ayarlanmıyordu. Bu düzeltildi, yeni haberler otomatik alt metinle geliyor — bu buton geçmiş haberleri de tek seferde doldurur.<br>"Eksik Görselleri Tespit Et ve Yükle": öne çıkan görseli hiç olmayan otomatik haberleri bulur, kaynak makale linkine tekrar gidip görseli indirmeyi dener.<br>"Kaynak Notunu Sadeleştir": eski "...habere git" linkli kaynak notunu sade "Güncel Haber Kaynak: X" ile değiştirir.<br>"Tüm Otomatik Haberleri Şimdi Sil": sınır yok, botun çektiği tüm haberleri siler (en eskiden başlayarak) — elle yazdığın haberlere hiç dokunmaz, sadece <code>_veng_source_name</code> meta'sı olanlara (yani botun eklediklerine) bakar.<br>"Sahipsiz Görselleri Sil": hiçbir yazının öne çıkan görseli olmayan VE var olan bir yazıya bağlı olmayan görselleri siler (logo/site ikonu korunur) — sayı sıfırsa buton görünmez.</p>
 
 		<h2>Durum</h2>
 		<p><strong>Toplam otomatik haber:</strong> <?php echo esc_html( number_format_i18n( $auto_post_count ) ); ?> (sınır yok — fazlaysa "Tüm Otomatik Haberleri Şimdi Sil" ile elle temizleyebilirsin)</p>
