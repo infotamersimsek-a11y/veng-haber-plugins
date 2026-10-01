@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.14
+ * Version: 1.0.15
  * Author: Veng Haber
  */
 
@@ -920,6 +920,20 @@ function veng_oh_run_emergency_category_fill( $max_imports_per_run = 6 ) {
 	return array( 'created' => $created, 'done' => empty( $needs ) );
 }
 
+/**
+ * Kullanıcı "acil, tek seferlik" istedi ama önceki tur bir turda 0 yeni haber bulunca
+ * (ör. o anki adaylar tükendi) kendini "tamamlandı" işaretlemiş olabilir. Bir kerelik
+ * bayrağı sıfırlayıp daha büyük batch'le (6) tekrar dener.
+ */
+function veng_oh_restart_emergency_fill_v2() {
+	if ( '1' !== get_option( 'veng_oh_emergency_fill_v2_restarted' ) ) {
+		update_option( 'veng_oh_emergency_fill_2026_10_done', '0' );
+		update_option( 'veng_oh_emergency_fill_2026_10_attempts', 0 );
+		update_option( 'veng_oh_emergency_fill_v2_restarted', '1' );
+	}
+}
+add_action( 'plugins_loaded', 'veng_oh_restart_emergency_fill_v2', 4 );
+
 function veng_oh_maybe_run_emergency_fill() {
 	if ( ! is_admin() || '1' === get_option( 'veng_oh_emergency_fill_2026_10_done' ) ) {
 		return;
@@ -928,11 +942,11 @@ function veng_oh_maybe_run_emergency_fill() {
 		return;
 	}
 
-	// Her haber 1 AI çağrısı içeriyor (birkaç saniye) — sayfa yüklemesi başına az sayıda
-	// (3) işlenir, zayıf sunucuda 502 riskine girmemek için. 25 denemeyle toplamda
-	// potansiyel 75 habere kadar çıkabilir, 10 kategori × 6 hedefini rahatça karşılar.
+	// Kullanıcı acil/tek seferlik istedi — sayfa yüklemesi başına 6'ya çıkarıldı (önceki
+	// 3'ten) ki birkaç admin sayfası gezince hızlıca tamamlansın. Yine de tek istekte
+	// hepsini birden yapmıyor (502 riski), 40 denemeyle toplamda 240 habere kadar çıkabilir.
 	$attempts = (int) get_option( 'veng_oh_emergency_fill_2026_10_attempts', 0 );
-	$result = veng_oh_run_emergency_category_fill( 3 );
+	$result = veng_oh_run_emergency_category_fill( 6 );
 	$attempts++;
 	update_option( 'veng_oh_emergency_fill_2026_10_attempts', $attempts );
 
@@ -941,7 +955,7 @@ function veng_oh_maybe_run_emergency_fill() {
 	update_option( 'veng_oh_emergency_fill_2026_10_created', $cumulative );
 	update_option( 'veng_oh_emergency_fill_2026_10_time', current_time( 'mysql' ) );
 
-	if ( $result['done'] || 0 === $result['created'] || $attempts >= 25 ) {
+	if ( $result['done'] || 0 === $result['created'] || $attempts >= 40 ) {
 		update_option( 'veng_oh_emergency_fill_2026_10_done', '1' );
 	}
 }
