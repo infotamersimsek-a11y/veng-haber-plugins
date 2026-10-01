@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Cache
  * Description: Tam sayfa önbellekleme (dosya tabanlı), gzip sıkıştırma, tarayıcı önbellek başlıkları ve veritabanı temizliği ile siteyi hızlandırır. Girişli ziyaretçilere, aramalara ve admin'e dokunmaz; yeni haber yayınlanınca önbellek otomatik temizlenir.
- * Version: 2.0.1
+ * Version: 2.0.2
  * Text Domain: veng-cache
  */
 
@@ -131,6 +131,11 @@ add_action( 'switch_theme', 'veng_cache_clear' );
 add_action( 'customize_save_after', 'veng_cache_clear' );
 add_action( 'activated_plugin', 'veng_cache_clear' );
 add_action( 'deactivated_plugin', 'veng_cache_clear' );
+// Aktif temayı/eklentiyi YERİNDE güncellemek (switch_theme / activated_plugin tetiklemez)
+// eski HTML'in önbellekte kalmasına yol açıyordu — "güncelledim ama değişmedi" şikayetinin
+// kök sebebi buydu. Her türlü güncelleme (tema/eklenti/çekirdek) sonunda WP bu action'ı
+// tetikler, cache'i o anda temizler.
+add_action( 'upgrader_process_complete', 'veng_cache_clear' );
 
 function veng_cache_stats() {
 	$count = 0;
