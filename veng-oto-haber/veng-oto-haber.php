@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.9
+ * Version: 1.0.13
  * Author: Veng Haber
  */
 
@@ -799,54 +799,20 @@ function veng_oh_maybe_run_pending_wipe() {
 add_action( 'plugins_loaded', 'veng_oh_maybe_run_pending_wipe' );
 
 /**
- * Son 1 günden eski TÜM yazıları (post/makale) siler — bot etiketi olsun ya da olmasın.
- * Kullanıcının kendi açık onayıyla eklendi: "son 1 gün dışındaki her şey eski sistemin
- * yüklediği haberler" dendiği için meta/etiket aramadan tarihe göre temizliyor. Aynı
- * parça parça (200/sayfa yüklemesi) güvenli desen kullanılıyor.
+ * KALDIRILDI (v1.0.13): "son 1 günden eski her şeyi sil" görevi öngörülenden çok daha
+ * fazla yazıyı (yüzlerce/binlerce, sadece hedeflenen ~500 değil) kalıcı olarak sildi —
+ * bu fonksiyon artık hiçbir yerden çağrılmıyor. Bu satırlar bilinçli olarak burada
+ * bırakıldı: bir daha ASLA tarih bazlı, sınırsız/geniş kapsamlı bir otomatik silme
+ * görevi eklenmemesi gerektiğinin hatırlatıcısı olarak.
+ * Aşağıdaki fonksiyon, zaten bu sürümü yüklemiş sitelerde görevin bir daha hiç
+ * çalışmayacağından emin olmak için bayrağı zorla "tamamlandı" işaretler.
  */
-function veng_oh_wipe_posts_older_than_one_day( $batch_size = 200 ) {
-	global $wpdb;
-	if ( function_exists( 'set_time_limit' ) ) {
-		@set_time_limit( 0 );
-	}
-	$post_ids = $wpdb->get_col( $wpdb->prepare(
-		"SELECT ID FROM {$wpdb->posts}
-		 WHERE post_type IN ('post','makale') AND post_date < %s LIMIT %d",
-		date( 'Y-m-d H:i:s', strtotime( '-1 day', current_time( 'timestamp' ) ) ),
-		$batch_size
-	) );
-	$result = veng_oh_bulk_delete_posts( $post_ids );
-	if ( $result['posts'] > 0 ) {
-		veng_oh_log( '1 günden eski temizlik: ' . $result['posts'] . ' yazı, ' . $result['attachments'] . ' görsel (' . $result['files'] . ' dosya) silindi.' );
-	}
-	return $result;
-}
-
-function veng_oh_maybe_run_date_cleanup() {
-	if ( ! is_admin() || '1' === get_option( 'veng_oh_date_cleanup_2026_10_done' ) ) {
-		return;
-	}
-	if ( isset( $_GET['action'] ) && 'activate' === $_GET['action'] ) {
-		return;
-	}
-
-	$result = veng_oh_wipe_posts_older_than_one_day( 200 );
-
-	$cumulative = get_option( 'veng_oh_date_cleanup_2026_10_result' );
-	if ( ! is_array( $cumulative ) ) {
-		$cumulative = array( 'posts' => 0, 'attachments' => 0, 'files' => 0 );
-	}
-	$cumulative['posts'] = ( $cumulative['posts'] ?? 0 ) + $result['posts'];
-	$cumulative['attachments'] = ( $cumulative['attachments'] ?? 0 ) + $result['attachments'];
-	$cumulative['files'] = ( $cumulative['files'] ?? 0 ) + $result['files'];
-	$cumulative['time'] = current_time( 'mysql' );
-	update_option( 'veng_oh_date_cleanup_2026_10_result', $cumulative );
-
-	if ( 0 === $result['posts'] ) {
+function veng_oh_force_disable_date_cleanup() {
+	if ( '1' !== get_option( 'veng_oh_date_cleanup_2026_10_done' ) ) {
 		update_option( 'veng_oh_date_cleanup_2026_10_done', '1' );
 	}
 }
-add_action( 'plugins_loaded', 'veng_oh_maybe_run_date_cleanup' );
+add_action( 'plugins_loaded', 'veng_oh_force_disable_date_cleanup', 1 );
 
 /**
  * Günlük sınır (50) devreye girerken mevcut tüm otomatik haberler sıfırdan baştan
