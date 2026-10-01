@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.18
+ * Version: 1.0.19
  * Author: Veng Haber
  */
 
@@ -898,6 +898,43 @@ function veng_oh_bulk_delete_posts( $post_ids ) {
 }
 
 /**
+ * Sputnik Türkiye artık kaynak listesinde değil (görsellerinde gömülü logo/yazı vardı) —
+ * ama daha önce çekilmiş Sputnik kaynaklı yazılar sitede duruyor. Bu fonksiyon SADECE
+ * SAYAR, hiçbir şeyi silmez — silme ayrı, kullanıcının elle bastığı bir butonla, burada
+ * gösterilen sayıyı gördükten sonra yapılır (geçmişteki yanlış toplu silme sonrası
+ * verilen söz: önce kesin sayı göster, sonra onayla).
+ */
+function veng_oh_count_sputnik_posts() {
+	global $wpdb;
+	$ids = $wpdb->get_col( $wpdb->prepare(
+		"SELECT p.ID FROM {$wpdb->posts} p
+		 INNER JOIN {$wpdb->postmeta} m ON m.post_id = p.ID AND m.meta_key = '_veng_source_name'
+		 WHERE p.post_type IN ('post','makale') AND p.post_status IN ('publish','draft','pending','future')
+		 AND m.meta_value LIKE %s",
+		'%Sputnik%'
+	) );
+	return array( 'ids' => $ids, 'count' => count( $ids ) );
+}
+
+/**
+ * Sputnik kaynaklı yazıları ÇÖPE taşır (kalıcı silmez) — wp_trash_post() kullanır,
+ * raw SQL değil, bu yüzden kategori sayıları (term_taxonomy.count) bozulmaz ve
+ * istenirse Çöp Kutusu'ndan geri alınabilir.
+ */
+function veng_oh_delete_sputnik_posts( $ids ) {
+	if ( function_exists( 'set_time_limit' ) ) {
+		@set_time_limit( 0 );
+	}
+	$deleted = 0;
+	foreach ( $ids as $id ) {
+		if ( wp_trash_post( $id ) ) {
+			$deleted++;
+		}
+	}
+	return $deleted;
+}
+
+/**
  * Sahipsiz medya: hiçbir yazının öne çıkan görseli olmayan VE var olan bir yazıya
  * bağlı olmayan (post_parent'ı 0 ya da artık var olmayan bir yazıya işaret eden)
  * görseller. Logo/site ikonu gibi aktif kullanılan görseller açıkça hariç tutulur.
@@ -1345,6 +1382,14 @@ function veng_oh_settings_page() {
 		echo '<div class="notice notice-success"><p>' . intval( $result['files'] ) . ' sahipsiz görsel silindi.' . ( $remaining > 0 ? ' Hâlâ ' . intval( $remaining ) . ' tane kaldı, butona tekrar bas.' : ' Hepsi temizlendi.' ) . '</p></div>';
 	}
 
+	if ( isset( $_POST['veng_oh_delete_sputnik_posts'] ) && check_admin_referer( 'veng_oh_settings' ) ) {
+		$sputnik = veng_oh_count_sputnik_posts();
+		$batch = array_slice( $sputnik['ids'], 0, 200 );
+		$deleted = veng_oh_delete_sputnik_posts( $batch );
+		$remaining = $sputnik['count'] - $deleted;
+		echo '<div class="notice notice-success"><p>' . intval( $deleted ) . ' Sputnik kaynaklı haber çöpe taşındı (geri alınabilir).' . ( $remaining > 0 ? ' Hâlâ ' . intval( $remaining ) . ' tane kaldı, butona tekrar bas.' : ' Hepsi temizlendi.' ) . '</p></div>';
+	}
+
 	$api_key = get_option( 'veng_oh_anthropic_api_key', '' );
 	$auto_publish = get_option( 'veng_oh_auto_publish', '1' ) === '1';
 	$last = get_option( 'veng_oh_last_run' );
@@ -1405,6 +1450,10 @@ function veng_oh_settings_page() {
 				<?php $orphans = veng_oh_count_orphaned_media_cached(); ?>
 				<?php if ( $orphans['count'] > 0 ) : ?>
 					<button type="submit" name="veng_oh_delete_orphaned_media" class="button" onclick="return confirm('<?php echo esc_js( number_format_i18n( $orphans['count'] ) ); ?> sahipsiz görsel (yaklaşık <?php echo esc_js( size_format( $orphans['bytes'] ) ); ?>) kalıcı olarak silinecek. Emin misin?' );">Sahipsiz Görselleri Sil (<?php echo esc_html( number_format_i18n( $orphans['count'] ) ); ?>, ~<?php echo esc_html( size_format( $orphans['bytes'] ) ); ?>)</button>
+				<?php endif; ?>
+				<?php $sputnik = veng_oh_count_sputnik_posts(); ?>
+				<?php if ( $sputnik['count'] > 0 ) : ?>
+					<button type="submit" name="veng_oh_delete_sputnik_posts" class="button" onclick="return confirm('<?php echo esc_js( number_format_i18n( $sputnik['count'] ) ); ?> Sputnik kaynaklı haber çöpe taşınacak (kalıcı silinmez, Çöp Kutusu\'ndan geri alınabilir). Emin misin?' );">Sputnik Haberlerini Çöpe Taşı (<?php echo esc_html( number_format_i18n( $sputnik['count'] ) ); ?>)</button>
 				<?php endif; ?>
 			</p>
 		</form>
