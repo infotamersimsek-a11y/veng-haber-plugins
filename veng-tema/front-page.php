@@ -43,10 +43,21 @@
 		<?php veng_ad_slot( 'Reklam Alanı · 728×90' ); ?>
 
 		<?php
-		// orderby=id yalnızca en eski oluşturulan 6 kategoriyi gösteriyordu — yeni/aktif
-		// kategoriler (ör. otomatik haberlerin yoğun olduğu kategoriler) id sırasında geriden
-		// gelirse hiç görünmüyordu. En çok yazısı olan (en aktif) 6 kategoriyi göster.
-		foreach ( get_categories( array( 'orderby' => 'count', 'order' => 'DESC', 'number' => 6, 'hide_empty' => true ) ) as $cat ) :
+		// orderby=id yalnızca en eski oluşturulan 6 kategoriyi gösteriyordu. orderby=count da
+		// güvenilmezdi: WordPress'in kategori sayısı önbelleği, toplu SQL silme işlemlerinden
+		// sonra güncellenmeden eski/yanlış değerde kalabiliyor (ör. gerçekte 2 yazısı olan bir
+		// kategori önbellekte "70" görünebiliyor) — bu da hangi 6 kategorinin seçildiğini
+		// bozuyordu. Bunun yerine GERÇEK, o anki yayınlanmış yazı sayısını doğrudan sorgula.
+		global $wpdb;
+		$top_cat_ids = $wpdb->get_col(
+			"SELECT tt.term_id FROM {$wpdb->term_taxonomy} tt
+			 INNER JOIN {$wpdb->term_relationships} tr ON tr.term_taxonomy_id = tt.term_taxonomy_id
+			 INNER JOIN {$wpdb->posts} p ON p.ID = tr.object_id
+			 WHERE tt.taxonomy = 'category' AND p.post_status = 'publish' AND p.post_type = 'post'
+			 GROUP BY tt.term_id ORDER BY COUNT(*) DESC LIMIT 6"
+		);
+		$top_cats = array_filter( array_map( 'get_category', $top_cat_ids ) );
+		foreach ( $top_cats as $cat ) :
 			$cat_q = new WP_Query( array( 'post_type' => 'post', 'posts_per_page' => 6, 'cat' => $cat->term_id ) );
 			if ( ! $cat_q->have_posts() ) { wp_reset_postdata(); continue; }
 			?>
