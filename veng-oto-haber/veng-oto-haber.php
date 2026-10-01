@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.16
+ * Version: 1.0.17
  * Author: Veng Haber
  */
 
@@ -311,6 +311,80 @@ function veng_oh_editorial_rewrite( $item, $source ) {
 }
 
 /**
+ * Aynı olayı farklı kaynaklardan anlatan haberleri harmanlayıp TEK, TAMAMEN ÖZGÜN bir
+ * haber üretir. Amaç: aynı konunun her kaynak için ayrı ayrı haberleşmesini önlemek
+ * (sunucuyu/kategori dengesini yormadan) ve Google'ın içeriği kopya değil yeni/özgün
+ * algılamasını sağlamak — bu da görünürlük ve etkileşimi artırır.
+ */
+function veng_oh_editorial_merge_rewrite( $story ) {
+	$api_key = get_option( 'veng_oh_anthropic_api_key' );
+	if ( ! $api_key ) {
+		veng_oh_log( 'API anahtarı kayıtlı değil, harmanlanan haber yeniden yazılmadan (ilk kaynağın özetiyle) eklendi.' );
+		return null;
+	}
+
+	$sources_text = '';
+	foreach ( $story as $i => $c ) {
+		$sources_text .= ( $i + 1 ) . ') [' . $c['feed']['source'] . '] Başlık: "' . $c['item']['title'] . '"'
+			. ' Özet: "' . mb_substr( $c['item']['summary'], 0, 500 ) . "\"\n";
+	}
+
+	$prompt = "Aşağıda aynı olayı/konuyu farklı haber kaynaklarından anlatan " . count( $story ) . " farklı başlık ve özet var. Bunların TÜMÜNÜ oku, bilgileri harmanla ve Veng Haber editöryel kurallarına göre TEK, TAMAMEN ÖZGÜN bir haber yaz. Hiçbir kaynağın cümlesini veya başlığını birebir/yakın kopyalama; farklı kaynaklardaki bilgileri birleştirip kendi cümlelerinle yeni bir anlatım kur.\n\n"
+		. "Editöryel kurallar (BBC Türkçe tarzı hedeflenir):\n"
+		. "- Türkçe, ölçülü, sade, doğrudan haber dili kullan; resmi ama anlaşılır bir ton benimse.\n"
+		. "- İlk cümlede konunun özünü doğrudan ver (inverted pyramid); dramatik/duygusal sıfatlar, ünlem, abartı kullanma.\n"
+		. "- Hiçbir taraf/kişi/kurum/örgüt lehine veya aleyhine yorum, övgü ya da suçlama içermesin; yalnızca bilinen olguları aktar.\n"
+		. "- İddia/açıklama niteliğindeki ifadeleri \"iddia edildi\", \"açıklandı\", \"belirtildi\" gibi temkinli atıf kalıplarıyla ver, kesin doğru gibi sunma.\n"
+		. "- Kaynaklarda GEÇMEYEN hiçbir detay, sayı, isim veya alıntı uydurma; sadece verilen bilgiyle sınırlı kal.\n"
+		. "- Magazinsel/abartılı ifadelerden kaçın, gazetecilik standardına uygun ol.\n\n"
+		. $sources_text . "\n"
+		. "Şunu JSON olarak döndür (başka hiçbir şey yazma):\n"
+		. '{"title": "...", "summary": "...", "content_html": "<p>...</p><p>...</p>"}' . "\n"
+		. 'content_html en az 2 paragraf olsun; başlık ve içerik hiçbir kaynaktaki başlık/cümleyle aynı olmasın.';
+
+	$res = wp_remote_post( 'https://api.anthropic.com/v1/messages', array(
+		'timeout' => 45,
+		'headers' => array(
+			'content-type'      => 'application/json',
+			'x-api-key'         => $api_key,
+			'anthropic-version' => '2023-06-01',
+		),
+		'body'    => wp_json_encode( array(
+			'model'      => 'claude-sonnet-5',
+			'max_tokens' => 2048,
+			'messages'   => array( array( 'role' => 'user', 'content' => $prompt ) ),
+		) ),
+	) );
+
+	if ( is_wp_error( $res ) ) {
+		veng_oh_log( 'Anthropic harman isteği başarısız: ' . $res->get_error_message() );
+		return null;
+	}
+	if ( wp_remote_retrieve_response_code( $res ) !== 200 ) {
+		veng_oh_log( 'Anthropic API (harman) ' . wp_remote_retrieve_response_code( $res ) . ': ' . wp_remote_retrieve_body( $res ) );
+		return null;
+	}
+
+	$data = json_decode( wp_remote_retrieve_body( $res ), true );
+	$text = '';
+	foreach ( (array) ( $data['content'] ?? array() ) as $block ) {
+		if ( isset( $block['type'] ) && 'text' === $block['type'] ) {
+			$text = $block['text'];
+			break;
+		}
+	}
+	if ( ! preg_match( '/\{[\s\S]*\}/', $text, $m ) ) {
+		veng_oh_log( 'AI harman yanıtından JSON çıkarılamadı: ' . mb_substr( $text, 0, 200 ) );
+		return null;
+	}
+	$parsed = json_decode( $m[0], true );
+	if ( empty( $parsed['title'] ) || empty( $parsed['content_html'] ) ) {
+		return null;
+	}
+	return $parsed;
+}
+
+/**
  * Tüm kaynaklar (feed'ler) sadece 'dunya'/'gundem' kategorisine işaretli — bu yüzden
  * ekonomi/spor/teknoloji/sağlık gibi diğer kategoriler hiç dolmuyordu. Başlık+özette
  * geçen anahtar kelimelere bakarak haberi gerçekte ait olduğu kategoriye yönlendirir;
@@ -338,35 +412,60 @@ function veng_oh_classify_category_slug( $title, $summary, $default_slug ) {
 	return $default_slug;
 }
 
+/** Tek kaynaklı eski çağrı şekli — geriye dönük uyumluluk için (acil kategori doldurma bunu kullanıyor). */
 function veng_oh_import_item( $item, $feed ) {
-	if ( veng_oh_already_imported( $item['link'] ) ) {
-		return false;
+	return veng_oh_import_story( array( array( 'item' => $item, 'feed' => $feed ) ) );
+}
+
+/**
+ * Bir "hikâye" (aynı olayı anlatan 1 veya daha fazla kaynak) içe aktarır. Birden fazla
+ * kaynak varsa veng_oh_editorial_merge_rewrite() hepsini harmanlayıp TEK özgün haber
+ * üretir — aynı konunun kaynak başına ayrı ayrı haberleşmesini (Google'da tekrar içerik
+ * gibi görünmesini) önler. Gruptaki TÜM kaynak linkleri _veng_source_url meta'sına ayrı
+ * ayrı eklenir, böylece ileride bu olayı farklı bir kaynaktan tekrar çeken bir tur onu
+ * "zaten eklenmiş" sayıp ikinci kez haberleştirmez.
+ */
+function veng_oh_import_story( $story ) {
+	foreach ( $story as $c ) {
+		if ( veng_oh_already_imported( $c['item']['link'] ) ) {
+			return false;
+		}
 	}
 
-	if ( empty( $item['summary'] ) || empty( $item['image'] ) ) {
-		$og = veng_oh_fetch_og_meta( $item['link'] );
-		if ( empty( $item['summary'] ) ) {
-			$item['summary'] = $og['summary'];
-		}
-		if ( empty( $item['image'] ) ) {
-			$item['image'] = $og['image'];
+	foreach ( $story as &$c ) {
+		if ( empty( $c['item']['summary'] ) || empty( $c['item']['image'] ) ) {
+			$og = veng_oh_fetch_og_meta( $c['item']['link'] );
+			if ( empty( $c['item']['summary'] ) ) {
+				$c['item']['summary'] = $og['summary'];
+			}
+			if ( empty( $c['item']['image'] ) ) {
+				$c['item']['image'] = $og['image'];
+			}
 		}
 	}
+	unset( $c );
 
-	$category_slug = veng_oh_classify_category_slug( $item['title'], $item['summary'], $feed['category'] );
+	$primary = $story[0];
+	$combined_text = implode( ' ', array_map( function ( $c ) { return $c['item']['title'] . ' ' . $c['item']['summary']; }, $story ) );
+	$category_slug = veng_oh_classify_category_slug( $primary['item']['title'], $combined_text, $primary['feed']['category'] );
 	$category = get_category_by_slug( $category_slug );
-	$title = $item['title'];
-	$excerpt = mb_substr( $item['summary'], 0, 300 );
+
+	$title = $primary['item']['title'];
+	$excerpt = mb_substr( $primary['item']['summary'], 0, 300 );
 	$body_html = '<p>' . esc_html( $excerpt ) . '</p>';
 
-	$draft = veng_oh_editorial_rewrite( $item, $feed['source'] );
+	$sources_label = implode( ', ', array_unique( array_map( function ( $c ) { return $c['feed']['source']; }, $story ) ) );
+
+	$draft = count( $story ) > 1
+		? veng_oh_editorial_merge_rewrite( $story )
+		: veng_oh_editorial_rewrite( $primary['item'], $primary['feed']['source'] );
 	if ( $draft ) {
 		$title = $draft['title'];
 		$excerpt = mb_substr( $draft['summary'] ?: $excerpt, 0, 300 );
 		$body_html = $draft['content_html'];
 	}
 
-	$attribution = '<p><em>Güncel Haber Kaynak: ' . esc_html( $feed['source'] ) . '</em></p>';
+	$attribution = '<p><em>Güncel Haber Kaynak: ' . esc_html( $sources_label ) . '</em></p>';
 
 	$status = get_option( 'veng_oh_auto_publish', '1' ) === '1' ? 'publish' : 'draft';
 
@@ -384,11 +483,20 @@ function veng_oh_import_item( $item, $feed ) {
 		return false;
 	}
 
-	update_post_meta( $post_id, '_veng_source_url', $item['link'] );
-	update_post_meta( $post_id, '_veng_source_name', $feed['source'] );
+	foreach ( $story as $c ) {
+		add_post_meta( $post_id, '_veng_source_url', $c['item']['link'] );
+	}
+	update_post_meta( $post_id, '_veng_source_name', $sources_label );
 
-	if ( ! empty( $item['image'] ) ) {
-		veng_oh_set_featured_image( $post_id, $item['image'], wp_strip_all_tags( $title ) );
+	$image = '';
+	foreach ( $story as $c ) {
+		if ( ! empty( $c['item']['image'] ) ) {
+			$image = $c['item']['image'];
+			break;
+		}
+	}
+	if ( $image ) {
+		veng_oh_set_featured_image( $post_id, $image, wp_strip_all_tags( $title ) );
 	}
 
 	return $post_id;
@@ -597,20 +705,19 @@ function veng_oh_run_import() {
 		return 0;
 	}
 
-	// 2. Aşama: aday sayısı sınırdan fazlaysa, hangi 3'ünün yazılacağına editöryel
-	// önem sırasına göre karar ver (bkz. veng_oh_pick_important_candidates) —
-	// aksi halde sadece ilk bulunan 3 haber seçilir, önemli bir gelişme feed
-	// sırasında geç geldiği için o saat tamamen atlanabilirdi.
-	$chosen = count( $candidates ) > $slots
-		? veng_oh_pick_important_candidates( $candidates, $slots )
-		: $candidates;
+	// 2. Aşama: farklı kaynaklardan gelen ama aynı olayı anlatan adayları tek "hikâye"de
+	// topla (bkz. veng_oh_group_and_pick_stories) — aynı konu 3 kaynaktan geldiyse 3 ayrı
+	// haber yerine TEK özgün haber çıkar; sonra hikâyeleri editöryel önceliğe göre sırala
+	// ve en öncelikli $slots taneyi seç.
+	$stories = veng_oh_group_and_pick_stories( $candidates, $slots );
 
 	$created = 0;
-	foreach ( $chosen as $c ) {
-		if ( veng_oh_import_item( $c['item'], $c['feed'] ) ) {
+	foreach ( $stories as $story ) {
+		if ( veng_oh_import_story( $story ) ) {
 			$created++;
 			$daily['count']++;
-			$lines[] = 'Seçildi: ' . $c['feed']['source'] . ' — ' . mb_substr( $c['item']['title'], 0, 80 );
+			$sources = array_unique( array_map( function ( $c ) { return $c['feed']['source']; }, $story ) );
+			$lines[] = 'Seçildi (' . count( $story ) . ' kaynak: ' . implode( ', ', $sources ) . '): ' . mb_substr( $story[0]['item']['title'], 0, 80 );
 		}
 	}
 
@@ -627,13 +734,20 @@ function veng_oh_run_import() {
 add_action( 'veng_oh_import_event', 'veng_oh_run_import' );
 
 /**
- * Aday haber listesinden editöryel açıdan en öncelikli $limit taneyi seçer — tek bir
- * Anthropic çağrısıyla tüm adayları birlikte değerlendirip numaralarını ister. API
- * anahtarı yoksa ya da yanıt ayrıştırılamazsa, listedeki ilk $limit adaya düşer
+ * Aday haber listesini "hikâye"lere gruplar — farklı kaynaklardan gelen ama aynı
+ * olayı/konuyu anlatan adaylar aynı grupta toplanır (tek Anthropic çağrısı: hem
+ * gruplama hem editöryel önem sıralaması bir arada). Sonucun her elemanı bir hikâye
+ * (1+ aday) olup veng_oh_import_story() ile tek haber olarak yazılır — böylece aynı
+ * konu kaynak sayısı kadar değil TEK kez haberleşir. API anahtarı yoksa, yanıt
+ * ayrıştırılamazsa veya aday sayısı 1 ise, her aday kendi tek-kaynaklı hikâyesi olur
  * (akışı asla kesmez).
  */
-function veng_oh_pick_important_candidates( $candidates, $limit ) {
-	$fallback = array_slice( $candidates, 0, $limit );
+function veng_oh_group_and_pick_stories( $candidates, $limit ) {
+	$fallback = array_map( function ( $c ) { return array( $c ); }, array_slice( $candidates, 0, $limit ) );
+
+	if ( count( $candidates ) <= 1 ) {
+		return array_map( function ( $c ) { return array( $c ); }, $candidates );
+	}
 
 	$api_key = get_option( 'veng_oh_anthropic_api_key' );
 	if ( ! $api_key ) {
@@ -649,11 +763,12 @@ function veng_oh_pick_important_candidates( $candidates, $limit ) {
 		$list .= "\n";
 	}
 
-	$prompt = "Aşağıda bu saat içinde yayına aday " . count( $candidates ) . " haber başlığı var. Bunlardan editöryel açıdan en öncelikli {$limit} taneyi seç.\n\n"
+	$prompt = "Aşağıda bu saat içinde yayına aday " . count( $candidates ) . " haber başlığı var. Farklı kaynaklardan gelen ama AYNI olayı/konuyu anlatan başlıkları aynı grupta topla (ör. 3 farklı kaynak aynı saldırıyı/açıklamayı farklı başlıklarla veriyorsa bunlar bir grup). Konusu farklı olanları tek başına kendi grubunda bırak.\n\n"
+		. "Sonra grupları editöryel önceliğe göre sırala ve en öncelikli {$limit} grubu seç.\n"
 		. "Öncelik ver: can kaybı/yaralanma, patlama/saldırı/afet, geniş kitleyi etkileyen resmi karar/açıklama (yargı, ekonomi, seçim, güvenlik), bölgeyi (Diyarbakır ve çevresi, Kürt bölgesi) doğrudan ilgilendiren gelişmeler.\n"
 		. "Düşük öncelik ver: rutin spor sonucu, magazin, tekrar eden/az bilgi içeren haberler.\n\n"
 		. $list . "\n"
-		. "Sadece seçtiğin {$limit} haberin numaralarını JSON dizisi olarak döndür, başka hiçbir şey yazma: {\"picks\": [3, 7, 1]}";
+		. "Sadece seçtiğin {$limit} grubu, her grubun aday numaralarını içeren bir dizi dizisi olarak JSON döndür, başka hiçbir şey yazma: {\"groups\": [[3, 7], [1], [5, 2, 9]]}";
 
 	$res = wp_remote_post( 'https://api.anthropic.com/v1/messages', array(
 		'timeout' => 30,
@@ -664,13 +779,13 @@ function veng_oh_pick_important_candidates( $candidates, $limit ) {
 		),
 		'body'    => wp_json_encode( array(
 			'model'      => 'claude-sonnet-5',
-			'max_tokens' => 256,
+			'max_tokens' => 512,
 			'messages'   => array( array( 'role' => 'user', 'content' => $prompt ) ),
 		) ),
 	) );
 
 	if ( is_wp_error( $res ) || wp_remote_retrieve_response_code( $res ) !== 200 ) {
-		veng_oh_log( 'Önem sıralama isteği başarısız, ilk ' . $limit . ' aday kullanılıyor.' );
+		veng_oh_log( 'Gruplama/önem sıralama isteği başarısız, ilk ' . $limit . ' aday tek tek kullanılıyor.' );
 		return $fallback;
 	}
 
@@ -686,22 +801,31 @@ function veng_oh_pick_important_candidates( $candidates, $limit ) {
 		return $fallback;
 	}
 	$parsed = json_decode( $m[0], true );
-	if ( empty( $parsed['picks'] ) || ! is_array( $parsed['picks'] ) ) {
+	if ( empty( $parsed['groups'] ) || ! is_array( $parsed['groups'] ) ) {
 		return $fallback;
 	}
 
-	$picked = array();
-	foreach ( $parsed['picks'] as $n ) {
-		$idx = (int) $n - 1;
-		if ( isset( $candidates[ $idx ] ) ) {
-			$picked[] = $candidates[ $idx ];
+	$stories = array();
+	foreach ( $parsed['groups'] as $group ) {
+		if ( ! is_array( $group ) ) {
+			continue;
 		}
-		if ( count( $picked ) >= $limit ) {
+		$story = array();
+		foreach ( $group as $n ) {
+			$idx = (int) $n - 1;
+			if ( isset( $candidates[ $idx ] ) ) {
+				$story[] = $candidates[ $idx ];
+			}
+		}
+		if ( $story ) {
+			$stories[] = $story;
+		}
+		if ( count( $stories ) >= $limit ) {
 			break;
 		}
 	}
 
-	return $picked ? $picked : $fallback;
+	return $stories ? $stories : $fallback;
 }
 
 /**
