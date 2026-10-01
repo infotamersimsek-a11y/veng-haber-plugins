@@ -14,6 +14,9 @@ function veng_theme_setup() {
 	set_post_thumbnail_size( 1200, 800, true );
 	add_image_size( 'veng-card', 600, 450, true );
 	add_image_size( 'veng-thumb', 300, 200, true );
+	// Manşet slider tam genişlik (1200px'e kadar) gösterildiği için 600x450'lik kart boyutu
+	// gerip bulanık çıkıyordu — slider'a özel, daha büyük bir boyut.
+	add_image_size( 'veng-hero', 1200, 600, true );
 
 	register_nav_menus( array(
 		'primary' => __( 'Ana Menü', 'veng-haber' ),

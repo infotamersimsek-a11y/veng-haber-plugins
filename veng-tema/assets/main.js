@@ -9,6 +9,31 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   }
 
+  // Hamburger yan menü: aç/kapat, overlay'e tıklayınca da kapat.
+  var menuToggle = document.getElementById('veng-menu-toggle');
+  var siteMenu = document.getElementById('veng-site-menu');
+  var menuOverlay = document.getElementById('veng-menu-overlay');
+  var menuClose = document.getElementById('veng-menu-close');
+  if (menuToggle && siteMenu && menuOverlay) {
+    function openMenu() {
+      siteMenu.classList.add('is-open');
+      siteMenu.setAttribute('aria-hidden', 'false');
+      menuOverlay.hidden = false;
+      menuToggle.setAttribute('aria-expanded', 'true');
+      document.body.style.overflow = 'hidden';
+    }
+    function closeMenu() {
+      siteMenu.classList.remove('is-open');
+      siteMenu.setAttribute('aria-hidden', 'true');
+      menuOverlay.hidden = true;
+      menuToggle.setAttribute('aria-expanded', 'false');
+      document.body.style.overflow = '';
+    }
+    menuToggle.addEventListener('click', openMenu);
+    menuOverlay.addEventListener('click', closeMenu);
+    if (menuClose) menuClose.addEventListener('click', closeMenu);
+  }
+
   // Manşet slider: 5sn'de bir otomatik geçer, noktaya tıklayınca oraya atlar (sayaç sıfırlanır),
   // üzerine gelince durur, dokunmatikte sağa/sola kaydırmayı destekler.
   var heroSlider = document.getElementById('heroSlider');

@@ -78,16 +78,19 @@ function veng_get_weather( $city = null ) {
 		return $cached;
 	}
 
+	// API çağrısı başarısız olunca sonucu cache'lemiyorduk — zayıf/yavaş sunucularda her
+	// sayfa yüklemesinde 8 şehir × 2 istek yeniden deneniyor, bu da sayfayı yavaşlatıyordu.
+	// Başarısızlığı da kısa süreliğine (5 dk) cache'leyip tekrar tekrar denemeyi önlüyoruz.
 	$geo = wp_remote_get( 'https://geocoding-api.open-meteo.com/v1/search?name=' . urlencode( $city ) . '&count=1&language=tr&format=json', array( 'timeout' => 5 ) );
-	if ( is_wp_error( $geo ) ) return null;
+	if ( is_wp_error( $geo ) ) { set_transient( $cache_key, null, 5 * MINUTE_IN_SECONDS ); return null; }
 	$geo_data = json_decode( wp_remote_retrieve_body( $geo ), true );
-	if ( empty( $geo_data['results'][0] ) ) return null;
+	if ( empty( $geo_data['results'][0] ) ) { set_transient( $cache_key, null, 5 * MINUTE_IN_SECONDS ); return null; }
 	$loc = $geo_data['results'][0];
 
 	$fc = wp_remote_get( "https://api.open-meteo.com/v1/forecast?latitude={$loc['latitude']}&longitude={$loc['longitude']}&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min&timezone=auto", array( 'timeout' => 5 ) );
-	if ( is_wp_error( $fc ) ) return null;
+	if ( is_wp_error( $fc ) ) { set_transient( $cache_key, null, 5 * MINUTE_IN_SECONDS ); return null; }
 	$fc_data = json_decode( wp_remote_retrieve_body( $fc ), true );
-	if ( empty( $fc_data['current'] ) ) return null;
+	if ( empty( $fc_data['current'] ) ) { set_transient( $cache_key, null, 5 * MINUTE_IN_SECONDS ); return null; }
 
 	$codes = array(
 		0 => array( 'Açık', '☀️' ), 1 => array( 'Az Bulutlu', '🌤️' ), 2 => array( 'Parçalı Bulutlu', '⛅' ), 3 => array( 'Kapalı', '☁️' ),
@@ -170,7 +173,7 @@ function veng_get_market_rates() {
  * navigasyonlu, 5 saniyede bir otomatik geçen tam genişlik slider (referans sitedeki
  * #heroSlider deseni birebir). Dönme mantığı assets/main.js içinde.
  */
-function veng_render_hero_slider( $count = 8 ) {
+function veng_render_hero_slider( $count = 20 ) {
 	$posts = get_posts( array( 'post_type' => 'post', 'posts_per_page' => $count, 'orderby' => 'date', 'order' => 'DESC' ) );
 	if ( ! $posts ) {
 		return;
@@ -180,7 +183,7 @@ function veng_render_hero_slider( $count = 8 ) {
 		<div class="hero-slider" id="heroSlider">
 			<?php foreach ( $posts as $i => $p ) : $cats = get_the_category( $p->ID ); ?>
 				<a href="<?php echo esc_url( get_permalink( $p ) ); ?>" class="hero-slide<?php echo 0 === $i ? ' is-active' : ''; ?>">
-					<?php echo veng_render_thumb( $p->ID, 'veng-card', array( 'loading' => 0 === $i ? 'eager' : 'lazy' ) ); ?>
+					<?php echo veng_render_thumb( $p->ID, 'veng-hero', array( 'loading' => 0 === $i ? 'eager' : 'lazy' ) ); ?>
 					<div class="hero-slide-text">
 						<?php if ( $cats ) : ?><span class="badge"><?php echo esc_html( $cats[0]->name ); ?></span><?php endif; ?>
 						<h2><?php echo esc_html( get_the_title( $p ) ); ?></h2>
@@ -200,26 +203,36 @@ function veng_render_hero_slider( $count = 8 ) {
 }
 
 /** Üst bardaki kayan "Son Dakika" şeridi: en yeni haberler + döviz/altın. */
-function veng_render_breaking_ticker() {
-	$posts = get_posts( array( 'post_type' => 'post', 'posts_per_page' => 8, 'orderby' => 'date', 'order' => 'DESC' ) );
-	if ( ! $posts ) return;
-
+/** Piyasa çubuğu: döviz/altın/BIST, kaymayan, yatayda taşarsa kaydırılabilir bağımsız şerit (referans sitedeki .market-bar). */
+function veng_render_market_bar() {
 	$rates = veng_get_market_rates();
-	$rate_labels = array();
-	foreach ( $rates as $r ) {
-		if ( in_array( $r['label'], array( 'USD/TRY', 'EUR/TRY', 'Gram Altın' ), true ) ) {
-			$rate_labels[] = $r['label'] . ' ' . $r['value'];
-		}
+	if ( ! $rates ) {
+		return;
 	}
+	?>
+	<div class="market-bar">
+		<div class="market-bar-inner">
+			<?php foreach ( $rates as $r ) : ?>
+				<span class="market-item">
+					<span class="market-label"><?php echo esc_html( $r['label'] ); ?></span>
+					<span class="market-value"><?php echo esc_html( $r['value'] ); ?></span>
+				</span>
+			<?php endforeach; ?>
+		</div>
+	</div>
+	<?php
+}
+
+/** Son Dakika şeridi: sadece en yeni haber başlıkları, sağa doğru kayan (referans sitedeki .ticker, döviz karışmıyor). */
+function veng_render_breaking_ticker() {
+	$posts = get_posts( array( 'post_type' => 'post', 'posts_per_page' => 10, 'orderby' => 'date', 'order' => 'DESC' ) );
+	if ( ! $posts ) return;
 
 	$items = array();
 	foreach ( $posts as $p ) {
-		$items[] = '<a href="' . esc_url( get_permalink( $p ) ) . '">' . esc_html( get_the_title( $p ) ) . '</a>';
+		$items[] = '<a href="' . esc_url( get_permalink( $p ) ) . '"><time>' . esc_html( date_i18n( 'd.m.Y H:i', get_post_time( 'U', false, $p ) ) ) . '</time> ' . esc_html( get_the_title( $p ) ) . '</a>';
 	}
-	foreach ( $rate_labels as $rl ) {
-		$items[] = '<span class="ticker-rate">' . esc_html( $rl ) . '</span>';
-	}
-	$track = implode( '<span class="ticker-sep">●</span>', $items );
+	$track = implode( '', $items );
 	?>
 	<div class="breaking-ticker">
 		<span class="breaking-label">Son Dakika</span>

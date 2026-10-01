@@ -22,12 +22,17 @@
 	</div>
 
 	<div class="brandbar">
-		<a class="logo" href="<?php echo esc_url( home_url( '/' ) ); ?>">
-			<?php
-			$parts = explode( ' ', get_bloginfo( 'name' ), 2 );
-			echo '<span>' . esc_html( $parts[0] ) . '</span>' . ( isset( $parts[1] ) ? ' ' . esc_html( $parts[1] ) : '' );
-			?>
-		</a>
+		<div style="display:flex;align-items:center;gap:4px;">
+			<button type="button" class="menu-toggle" id="veng-menu-toggle" aria-expanded="false" aria-controls="veng-site-menu" aria-label="Menüyü aç">
+				<span></span><span></span><span></span>
+			</button>
+			<a class="logo" href="<?php echo esc_url( home_url( '/' ) ); ?>">
+				<?php
+				$parts = explode( ' ', get_bloginfo( 'name' ), 2 );
+				echo '<span>' . esc_html( $parts[0] ) . '</span>' . ( isset( $parts[1] ) ? ' ' . esc_html( $parts[1] ) : '' );
+				?>
+			</a>
+		</div>
 		<div class="header-actions">
 			<button class="icon-btn" id="veng-search-toggle" aria-label="Ara">
 				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
@@ -44,6 +49,8 @@
 		</form>
 	</div>
 
+	<?php veng_render_market_bar(); ?>
+
 	<?php
 	// Önceden mobilde tüm sayfayı kaplama bug'ı yüzünden kapatılmıştı — yükseklik artık
 	// hem masaüstü hem mobil için kilitli (height/max-height/min-height + overflow:hidden),
@@ -53,28 +60,45 @@
 
 	<?php veng_render_mobile_info_ticker(); ?>
 
+	<?php
+	// Her giriş için birden fazla aday slug: sitedeki gerçek taksonomi farklı adlandırılmış olabilir (ör. politika/siyaset).
+	$veng_main_menu_defs = array(
+		array( 'gundem' ),
+		array( 'ekonomi' ),
+		array( 'dunya' ),
+		array( 'spor' ),
+		array( 'yasam' ),
+		array( 'siyaset', 'politika' ),
+		array( 'teknoloji' ),
+		array( 'saglik', 'saglik-haberleri' ),
+	);
+	$veng_nav_cats = array();
+	foreach ( $veng_main_menu_defs as $veng_slug_candidates ) {
+		$cat = null;
+		foreach ( $veng_slug_candidates as $veng_slug ) {
+			$cat = get_category_by_slug( $veng_slug );
+			if ( $cat ) break;
+		}
+		if ( $cat ) $veng_nav_cats[] = $cat;
+	}
+	?>
 	<nav class="categorynav">
-		<?php
-		// Her giriş için birden fazla aday slug: sitedeki gerçek taksonomi farklı adlandırılmış olabilir (ör. politika/siyaset).
-		$veng_main_menu_defs = array(
-			array( 'gundem' ),
-			array( 'ekonomi' ),
-			array( 'dunya' ),
-			array( 'spor' ),
-			array( 'yasam' ),
-			array( 'siyaset', 'politika' ),
-			array( 'teknoloji' ),
-			array( 'saglik', 'saglik-haberleri' ),
-		);
-		foreach ( $veng_main_menu_defs as $veng_slug_candidates ) :
-			$cat = null;
-			foreach ( $veng_slug_candidates as $veng_slug ) {
-				$cat = get_category_by_slug( $veng_slug );
-				if ( $cat ) break;
-			}
-			if ( ! $cat ) continue;
-			?>
+		<?php foreach ( $veng_nav_cats as $cat ) : ?>
 			<a href="<?php echo esc_url( get_category_link( $cat->term_id ) ); ?>"><?php echo esc_html( $cat->name ); ?></a>
 		<?php endforeach; ?>
 	</nav>
 </header>
+
+<div class="menu-overlay" id="veng-menu-overlay" hidden></div>
+<nav class="site-menu" id="veng-site-menu" aria-hidden="true">
+	<div class="site-menu-head">
+		<span class="site-menu-title">Kategoriler</span>
+		<button type="button" class="menu-close" id="veng-menu-close" aria-label="Menüyü kapat">&times;</button>
+	</div>
+	<ul class="site-menu-list">
+		<li class="site-menu-item"><div class="site-menu-row"><a href="<?php echo esc_url( home_url( '/' ) ); ?>">Ana Sayfa</a></div></li>
+		<?php foreach ( $veng_nav_cats as $cat ) : ?>
+			<li class="site-menu-item"><div class="site-menu-row"><a href="<?php echo esc_url( get_category_link( $cat->term_id ) ); ?>"><?php echo esc_html( $cat->name ); ?></a></div></li>
+		<?php endforeach; ?>
+	</ul>
+</nav>

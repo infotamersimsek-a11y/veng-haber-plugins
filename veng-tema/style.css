@@ -3,7 +3,7 @@ Theme Name: Veng
 Theme URI: https://venghaber.com
 Author: Veng Haber
 Description: Google News, BİK ve SEO uyumlu haber sitesi teması. Onemsoft Haber Yazılımı analizinden esinlenerek geliştirilmiştir.
-Version: 1.0.12
+Version: 1.0.13
 Requires PHP: 7.4
 Text Domain: veng
 */
@@ -112,20 +112,42 @@ img { max-width: 100%; height: auto; display: block; }
 .icon-btn { border: none; background: transparent; cursor: pointer; padding: 8px; border-radius: 8px; color: var(--fg); display: flex; }
 .icon-btn:hover { background: var(--bg); }
 
-.categorynav { display: flex; align-items: center; gap: 2px; overflow-x: auto; padding: 0 16px; max-width: 1200px; margin: 0 auto; border-top: 1px solid var(--border); list-style: none; min-height: 38px; }
+/* Hamburger menü tetikleyici */
+.menu-toggle { display: flex; flex-direction: column; justify-content: center; gap: 4px; width: 26px; height: 20px; background: none; border: none; cursor: pointer; padding: 0; flex-shrink: 0; }
+.menu-toggle span { display: block; height: 3px; border-radius: 2px; background: var(--fg); }
+
+/* Açılır kategori menüsü (off-canvas) */
+.menu-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 90; }
+.site-menu { position: fixed; top: 0; left: 0; bottom: 0; width: min(320px, 85vw); background: var(--card); z-index: 100; transform: translateX(-100%); transition: transform .25s ease; overflow-y: auto; box-shadow: 4px 0 24px rgba(0,0,0,.18); }
+.site-menu.is-open { transform: translateX(0); }
+.site-menu-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 18px; background: var(--theme); color: #fff; position: sticky; top: 0; }
+.site-menu-title { font-weight: 800; font-size: 17px; }
+.menu-close { background: none; border: none; color: #fff; font-size: 24px; line-height: 1; cursor: pointer; padding: 0; }
+.site-menu-list { list-style: none; margin: 0; padding: 0; }
+.site-menu-row { display: flex; border-bottom: 1px solid var(--border); }
+.site-menu-row a { flex: 1; padding: 14px 18px; font-weight: 700; font-size: 15px; color: var(--fg); }
+.site-menu-row a:hover { color: var(--theme); }
+
+.categorynav { display: flex; align-items: center; gap: 4px; overflow-x: auto; padding: 0 16px; max-width: 1200px; margin: 0 auto; border-top: 1px solid var(--border); list-style: none; min-height: 44px; }
 .categorynav li { list-style: none; display: inline-block; }
-.categorynav a { padding: 8px 10px; font-size: 12.5px; font-weight: 700; white-space: nowrap; display: inline-block; text-transform: lowercase; }
+.categorynav a { padding: 10px 14px; font-size: 15px; font-weight: 700; white-space: nowrap; display: inline-block; text-transform: lowercase; }
 .categorynav a::first-letter { text-transform: uppercase; }
+
+/* Piyasa çubuğu: kaymaz, gerekirse yatayda elle kaydırılır */
+.market-bar { background: var(--bg); border-bottom: 1px solid var(--border); font-size: 13px; }
+.market-bar-inner { display: flex; gap: 22px; overflow-x: auto; padding: 7px 16px; max-width: 1200px; margin: 0 auto; }
+.market-item { display: flex; gap: 6px; align-items: baseline; white-space: nowrap; flex-shrink: 0; }
+.market-label { color: var(--muted); font-weight: 600; }
+.market-value { font-weight: 800; color: var(--fg); }
 
 /* Son Dakika kayan yazı — yükseklik kilitli, hiçbir içerik onu büyütemez */
 .breaking-ticker { display: flex; flex-wrap: nowrap; align-items: stretch; background: var(--theme); border-top: 1px solid var(--border); overflow: hidden; height: 34px; max-height: 34px; min-height: 34px; width: 100%; }
 .breaking-label { flex: 0 0 auto; display: flex; align-items: center; padding: 0 14px; font-size: 11px; font-weight: 800; letter-spacing: .04em; color: #fff; background: rgba(0,0,0,.18); text-transform: uppercase; white-space: nowrap; height: 100%; }
 .ticker-viewport { flex: 1 1 auto; overflow: hidden; position: relative; height: 100%; min-width: 0; }
-.ticker-track { display: flex; flex-wrap: nowrap; width: max-content; height: 100%; align-items: center; animation: veng-ticker-scroll 45s linear infinite; }
-.ticker-group { display: flex; flex-wrap: nowrap; align-items: center; gap: 10px; padding: 0 16px; white-space: nowrap; height: 100%; }
-.ticker-group a, .ticker-group .ticker-rate { color: #fff; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
-.ticker-group .ticker-rate { font-weight: 800; opacity: .95; }
-.ticker-sep { opacity: .5; font-size: 8px; margin: 0 4px; color: #fff; white-space: nowrap; }
+.ticker-track { display: flex; flex-wrap: nowrap; width: max-content; height: 100%; align-items: center; animation: veng-ticker-scroll 90s linear infinite; }
+.ticker-group { display: flex; flex-wrap: nowrap; align-items: stretch; height: 100%; }
+.ticker-group a { display: flex; align-items: center; gap: 8px; color: #fff; font-size: 12.5px; font-weight: 600; white-space: nowrap; padding: 0 16px; border-right: 1px solid rgba(255,255,255,.2); height: 100%; }
+.ticker-group a time { font-weight: 800; opacity: .8; font-size: 11px; }
 .breaking-ticker:hover .ticker-track { animation-play-state: paused; }
 @keyframes veng-ticker-scroll {
   from { transform: translateX(0); }
