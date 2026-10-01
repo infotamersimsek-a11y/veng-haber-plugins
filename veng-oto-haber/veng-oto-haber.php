@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.7
+ * Version: 1.0.8
  * Author: Veng Haber
  */
 
@@ -949,6 +949,17 @@ function veng_oh_settings_page() {
 		 WHERE p.post_type IN ('post','makale') AND p.post_status = 'publish'",
 		'_veng_source_name'
 	) );
+	// "_veng_source_name" etiketi olmayan yazılar: ya elle yazılmış, ya da bu eklentiden
+	// ÖNCEKİ bir sistemin eklediği eski kayıtlar olabilir. Hangisi olduğunu güvenle ayırt
+	// etmeden toplu silmek riskli — bu yüzden sadece yazara göre sayıp GÖSTERİYORUZ,
+	// otomatik silmiyoruz. Hangi yazarın "bot/eski sistem" olduğu bu listeden anlaşılır.
+	$unmarked_by_author = $wpdb->get_results(
+		"SELECT p.post_author, COUNT(*) cnt, MIN(p.post_date) oldest, MAX(p.post_date) newest
+		 FROM {$wpdb->posts} p
+		 LEFT JOIN {$wpdb->postmeta} m ON m.post_id = p.ID AND m.meta_key = '_veng_source_name'
+		 WHERE p.post_type IN ('post','makale') AND p.post_status = 'publish' AND m.post_id IS NULL
+		 GROUP BY p.post_author ORDER BY cnt DESC"
+	);
 	?>
 	<div class="wrap">
 		<h1>Veng Oto Haber</h1>
@@ -1002,6 +1013,24 @@ function veng_oh_settings_page() {
 			<p>Henüz otomatik tarama çalışmadı. "Şimdi Çalıştır" ile ilk taramayı başlatabilirsin.</p>
 		<?php endif; ?>
 		<p><strong>Sıradaki otomatik çalışma:</strong> <?php echo $next_cron ? esc_html( date_i18n( 'd F Y, H:i', $next_cron ) ) : 'planlanmadı'; ?></p>
+
+		<?php if ( $unmarked_by_author ) : ?>
+			<h2>Botun işaretlemediği yazılar (yazara göre)</h2>
+			<p class="description">Bunlar "otomatik haber" etiketi taşımıyor — elle yazılmış olabilir YA DA bu eklentiden önceki eski bir sistemin eklediği kayıtlar olabilir. Güvenlik için otomatik silinmiyor. Aşağıdaki yazar hangisiyse söyle, o yazara ait olanları tek seferde temizleyen bir buton ekleyeyim.</p>
+			<table class="widefat striped" style="max-width:700px;">
+				<thead><tr><th>Yazar</th><th>Adet</th><th>En eski</th><th>En yeni</th></tr></thead>
+				<tbody>
+					<?php foreach ( $unmarked_by_author as $row ) : $user = get_userdata( $row->post_author ); ?>
+						<tr>
+							<td><?php echo $user ? esc_html( $user->display_name ) . ' (ID ' . intval( $row->post_author ) . ')' : 'Kullanıcı yok (ID ' . intval( $row->post_author ) . ')'; ?></td>
+							<td><?php echo intval( $row->cnt ); ?></td>
+							<td><?php echo esc_html( $row->oldest ); ?></td>
+							<td><?php echo esc_html( $row->newest ); ?></td>
+						</tr>
+					<?php endforeach; ?>
+				</tbody>
+			</table>
+		<?php endif; ?>
 	</div>
 	<?php
 }

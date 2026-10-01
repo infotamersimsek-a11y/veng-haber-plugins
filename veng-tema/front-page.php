@@ -37,7 +37,11 @@
 
 		<?php veng_ad_slot( 'Reklam Alanı · 728×90' ); ?>
 
-		<?php foreach ( get_categories( array( 'orderby' => 'id', 'number' => 6 ) ) as $cat ) :
+		<?php
+		// orderby=id yalnızca en eski oluşturulan 6 kategoriyi gösteriyordu — yeni/aktif
+		// kategoriler (ör. otomatik haberlerin yoğun olduğu kategoriler) id sırasında geriden
+		// gelirse hiç görünmüyordu. En çok yazısı olan (en aktif) 6 kategoriyi göster.
+		foreach ( get_categories( array( 'orderby' => 'count', 'order' => 'DESC', 'number' => 6, 'hide_empty' => true ) ) as $cat ) :
 			$cat_q = new WP_Query( array( 'post_type' => 'post', 'posts_per_page' => 6, 'cat' => $cat->term_id ) );
 			if ( ! $cat_q->have_posts() ) { wp_reset_postdata(); continue; }
 			?>
