@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.6
+ * Version: 1.0.7
  * Author: Veng Haber
  */
 
@@ -11,12 +11,13 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Sunucuyu yormamak için günlük en fazla bu kadar haber eklenir.
-define( 'VENG_OH_DAILY_CAP', 50 );
-// Saat başı çalışan taramada en fazla bu kadar yeni haber eklenir.
-define( 'VENG_OH_RUN_CAP', 3 );
+define( 'VENG_OH_DAILY_CAP', 30 );
 // Haberler sadece bu saat aralığında (site saatine göre) çekilir.
 define( 'VENG_OH_ACTIVE_HOUR_START', 6 );
 define( 'VENG_OH_ACTIVE_HOUR_END', 22 );
+// Saat başı çalışan taramada en fazla bu kadar yeni haber eklenir — sabit değil,
+// günlük sınırın aktif saat sayısına bölünmesiyle kendiliğinden hesaplanır.
+define( 'VENG_OH_RUN_CAP', (int) ceil( VENG_OH_DAILY_CAP / ( VENG_OH_ACTIVE_HOUR_END - VENG_OH_ACTIVE_HOUR_START ) ) );
 
 // Otomatik güncelleme: GitHub'daki paylaşılan depoyu kontrol eder, "Güncelleme mevcut" bildirimini
 // wp-admin'de gösterir — artık zip indirip elle yüklemeye gerek yok.
