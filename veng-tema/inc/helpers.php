@@ -16,11 +16,19 @@ function veng_post_link( $post_id ) {
 	return get_permalink( $post_id );
 }
 
+/** Öne çıkan görseli olmayan haberlerde boş gri kutu yerine "Son Dakika" rozetli bir dolgu gösterir. */
+function veng_render_thumb( $post_id, $size, $attrs = array() ) {
+	if ( has_post_thumbnail( $post_id ) ) {
+		return get_the_post_thumbnail( $post_id, $size, $attrs );
+	}
+	return '<div class="no-img-fill"><span class="no-img-badge">Son Dakika</span></div>';
+}
+
 function veng_render_hcard( $post_id ) {
 	$cats = get_the_category( $post_id );
 	?>
 	<a class="hcard" href="<?php echo esc_url( get_permalink( $post_id ) ); ?>">
-		<div class="hcard-thumb"><?php echo get_the_post_thumbnail( $post_id, 'veng-thumb', array( 'loading' => 'lazy' ) ); ?></div>
+		<div class="hcard-thumb"><?php echo veng_render_thumb( $post_id, 'veng-thumb', array( 'loading' => 'lazy' ) ); ?></div>
 		<div>
 			<?php if ( $cats ) : ?><span class="cat"><?php echo esc_html( $cats[0]->name ); ?></span><?php endif; ?>
 			<h3><?php echo esc_html( get_the_title( $post_id ) ); ?></h3>
@@ -34,7 +42,7 @@ function veng_render_gcard( $post_id ) {
 	$cats = get_the_category( $post_id );
 	?>
 	<a href="<?php echo esc_url( get_permalink( $post_id ) ); ?>">
-		<div class="gcard-thumb"><?php echo get_the_post_thumbnail( $post_id, 'veng-card', array( 'loading' => 'lazy' ) ); ?></div>
+		<div class="gcard-thumb"><?php echo veng_render_thumb( $post_id, 'veng-card', array( 'loading' => 'lazy' ) ); ?></div>
 		<?php if ( $cats ) : ?><span class="cat" style="color:var(--theme);font-size:11px;font-weight:700;"><?php echo esc_html( $cats[0]->name ); ?></span><?php endif; ?>
 		<h3><?php echo esc_html( get_the_title( $post_id ) ); ?></h3>
 		<div class="meta" style="font-size:12px;color:var(--muted);"><?php echo esc_html( veng_time_ago( get_post_time( 'U', false, $post_id ) ) ); ?></div>

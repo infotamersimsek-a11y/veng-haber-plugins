@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.8
+ * Version: 1.0.9
  * Author: Veng Haber
  */
 
@@ -799,6 +799,56 @@ function veng_oh_maybe_run_pending_wipe() {
 add_action( 'plugins_loaded', 'veng_oh_maybe_run_pending_wipe' );
 
 /**
+ * Son 1 günden eski TÜM yazıları (post/makale) siler — bot etiketi olsun ya da olmasın.
+ * Kullanıcının kendi açık onayıyla eklendi: "son 1 gün dışındaki her şey eski sistemin
+ * yüklediği haberler" dendiği için meta/etiket aramadan tarihe göre temizliyor. Aynı
+ * parça parça (200/sayfa yüklemesi) güvenli desen kullanılıyor.
+ */
+function veng_oh_wipe_posts_older_than_one_day( $batch_size = 200 ) {
+	global $wpdb;
+	if ( function_exists( 'set_time_limit' ) ) {
+		@set_time_limit( 0 );
+	}
+	$post_ids = $wpdb->get_col( $wpdb->prepare(
+		"SELECT ID FROM {$wpdb->posts}
+		 WHERE post_type IN ('post','makale') AND post_date < %s LIMIT %d",
+		date( 'Y-m-d H:i:s', strtotime( '-1 day', current_time( 'timestamp' ) ) ),
+		$batch_size
+	) );
+	$result = veng_oh_bulk_delete_posts( $post_ids );
+	if ( $result['posts'] > 0 ) {
+		veng_oh_log( '1 günden eski temizlik: ' . $result['posts'] . ' yazı, ' . $result['attachments'] . ' görsel (' . $result['files'] . ' dosya) silindi.' );
+	}
+	return $result;
+}
+
+function veng_oh_maybe_run_date_cleanup() {
+	if ( ! is_admin() || '1' === get_option( 'veng_oh_date_cleanup_2026_10_done' ) ) {
+		return;
+	}
+	if ( isset( $_GET['action'] ) && 'activate' === $_GET['action'] ) {
+		return;
+	}
+
+	$result = veng_oh_wipe_posts_older_than_one_day( 200 );
+
+	$cumulative = get_option( 'veng_oh_date_cleanup_2026_10_result' );
+	if ( ! is_array( $cumulative ) ) {
+		$cumulative = array( 'posts' => 0, 'attachments' => 0, 'files' => 0 );
+	}
+	$cumulative['posts'] = ( $cumulative['posts'] ?? 0 ) + $result['posts'];
+	$cumulative['attachments'] = ( $cumulative['attachments'] ?? 0 ) + $result['attachments'];
+	$cumulative['files'] = ( $cumulative['files'] ?? 0 ) + $result['files'];
+	$cumulative['time'] = current_time( 'mysql' );
+	update_option( 'veng_oh_date_cleanup_2026_10_result', $cumulative );
+
+	if ( 0 === $result['posts'] ) {
+		update_option( 'veng_oh_date_cleanup_2026_10_done', '1' );
+	}
+}
+add_action( 'plugins_loaded', 'veng_oh_maybe_run_date_cleanup' );
+
+/**
  * Günlük sınır (50) devreye girerken mevcut tüm otomatik haberler sıfırdan baştan
  * temizleniyor — v1 temizliği zaten tamamlanmış kurulumlarda da bir kerelik tekrar
  * tetiklemek için v1 bayrağını sıfırlar, var olan parça parça temizleme mekanizması
@@ -901,6 +951,16 @@ function veng_oh_settings_page() {
 			echo '<div class="notice notice-success"><p><strong>Tam temizlik tamamlandı</strong> (' . esc_html( $wipe_result['time'] ) . '): toplam ' . intval( $wipe_result['posts'] ) . ' otomatik haber ve ' . intval( $wipe_result['attachments'] ) . ' görsel kalıcı olarak silindi. Elle yazdığın haberler dokunulmadan duruyor.</p></div>';
 		} else {
 			echo '<div class="notice notice-warning"><p><strong>Temizlik devam ediyor…</strong> Şu ana kadar ' . intval( $wipe_result['posts'] ) . ' haber silindi. Sunucuyu boğmamak için parça parça yapılıyor — bu sayfayı birkaç kez yenile, otomatik devam edecek.</p></div>';
+		}
+	}
+
+	$date_cleanup_result = get_option( 'veng_oh_date_cleanup_2026_10_result' );
+	$date_cleanup_done = '1' === get_option( 'veng_oh_date_cleanup_2026_10_done' );
+	if ( $date_cleanup_result ) {
+		if ( $date_cleanup_done ) {
+			echo '<div class="notice notice-success"><p><strong>1 günden eski yazı temizliği tamamlandı</strong> (' . esc_html( $date_cleanup_result['time'] ) . '): toplam ' . intval( $date_cleanup_result['posts'] ) . ' yazı ve ' . intval( $date_cleanup_result['attachments'] ) . ' görsel silindi. Son 24 saatteki haberler dokunulmadan duruyor.</p></div>';
+		} else {
+			echo '<div class="notice notice-warning"><p><strong>1 günden eski yazılar temizleniyor…</strong> Şu ana kadar ' . intval( $date_cleanup_result['posts'] ) . ' yazı silindi. Bu sayfayı birkaç kez yenile, otomatik devam edecek.</p></div>';
 		}
 	}
 

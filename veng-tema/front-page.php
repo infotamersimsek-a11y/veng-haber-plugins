@@ -6,9 +6,14 @@
 		<h1 class="sr-only"><?php bloginfo( 'name' ); ?><?php echo get_bloginfo( 'description' ) ? ' — ' . esc_html( get_bloginfo( 'description' ) ) : ' — Güncel Haberler'; ?></h1>
 
 		<?php
+		// "Öne Çıkan" etiketi süresiz geçerliydi — biri aylar önce bir haberi etiketleyip
+		// unutunca o haber kalıcı olarak en üstte kalıyor, yeni haberler hiç görünmüyordu.
+		// Artık öne çıkan etiketi sadece SON 2 GÜN içinde konmuşsa dikkate alınır, aksi halde
+		// doğrudan en güncel haberler gösterilir.
 		$featured_q = new WP_Query( array(
 			'post_type' => 'post', 'posts_per_page' => 5,
 			'tax_query' => array( array( 'taxonomy' => 'rozet', 'field' => 'slug', 'terms' => 'one-cikan' ) ),
+			'date_query' => array( array( 'after' => '2 days ago' ) ),
 		) );
 		if ( ! $featured_q->have_posts() ) {
 			$featured_q = new WP_Query( array( 'post_type' => 'post', 'posts_per_page' => 5 ) );
@@ -21,7 +26,7 @@
 		<?php if ( $main ) : $cats = get_the_category( $main->ID ); ?>
 		<section class="hero">
 			<a class="hero-main" href="<?php echo esc_url( get_permalink( $main ) ); ?>">
-				<?php echo get_the_post_thumbnail( $main, 'veng-card' ); ?>
+				<?php echo veng_render_thumb( $main->ID, 'veng-card' ); ?>
 				<div class="hero-overlay">
 					<div>
 						<?php if ( $cats ) : ?><span class="badge"><?php echo esc_html( $cats[0]->name ); ?></span><?php endif; ?>

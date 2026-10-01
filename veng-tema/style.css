@@ -3,7 +3,7 @@ Theme Name: Veng
 Theme URI: https://venghaber.com
 Author: Veng Haber
 Description: Google News, BİK ve SEO uyumlu haber sitesi teması. Onemsoft Haber Yazılımı analizinden esinlenerek geliştirilmiştir.
-Version: 1.0.6
+Version: 1.0.7
 Requires PHP: 7.4
 Text Domain: veng
 */
@@ -199,6 +199,11 @@ img { max-width: 100%; height: auto; display: block; }
 
 .card { border: 1px solid var(--border); background: var(--card); border-radius: 12px; padding: 16px; }
 .widget-title { font-size: 12px; font-weight: 800; color: var(--muted); margin: 0 0 10px; letter-spacing: .03em; }
+
+/* Öne çıkan görseli olmayan haberler: boş gri kutu yerine "Son Dakika" rozetli dolgu */
+.no-img-fill { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, var(--theme), #2d1458); }
+.no-img-badge { color: #fff; font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; padding: 5px 12px; border: 1px solid rgba(255,255,255,.4); border-radius: 4px; white-space: nowrap; }
+.hero-main .no-img-badge { font-size: 13px; padding: 7px 16px; }
 
 .compact-list a { display: flex; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 14px; font-weight: 600; }
 .compact-list a:last-child { border-bottom: none; }
