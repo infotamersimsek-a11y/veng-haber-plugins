@@ -2,13 +2,16 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.4
+ * Version: 1.0.5
  * Author: Veng Haber
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
+
+// Sunucuyu yormamak için günlük en fazla bu kadar haber eklenir.
+define( 'VENG_OH_DAILY_CAP', 50 );
 
 // Otomatik güncelleme: GitHub'daki paylaşılan depoyu kontrol eder, "Güncelleme mevcut" bildirimini
 // wp-admin'de gösterir — artık zip indirip elle yüklemeye gerek yok.
@@ -485,6 +488,19 @@ function veng_oh_log( $msg ) {
 	error_log( '[VengOtoHaber] ' . $msg );
 }
 
+/**
+ * Günlük içe aktarım sayacı: sunucuyu yormamak için bir günde en fazla
+ * VENG_OH_DAILY_CAP haber eklenir. Tarih değişince otomatik sıfırlanır.
+ */
+function veng_oh_get_daily_count() {
+	$data = get_option( 'veng_oh_daily_count' );
+	$today = current_time( 'Y-m-d' );
+	if ( ! is_array( $data ) || ( $data['date'] ?? '' ) !== $today ) {
+		return array( 'date' => $today, 'count' => 0 );
+	}
+	return $data;
+}
+
 function veng_oh_run_import() {
 	// Arka planda (wp-cron) çalışıyor, kullanıcı sayfası bloklamıyor — yavaş kaynaklar
 	// toplamda 30sn'yi geçince PHP'nin varsayılan max_execution_time'ı tüm importu
@@ -496,8 +512,13 @@ function veng_oh_run_import() {
 	$items_per_feed = 5;
 	$created = 0;
 	$lines = array();
+	$daily = veng_oh_get_daily_count();
 
 	foreach ( veng_oh_feeds() as $feed ) {
+		if ( $daily['count'] >= VENG_OH_DAILY_CAP ) {
+			$lines[] = 'Günlük sınıra (' . VENG_OH_DAILY_CAP . ') ulaşıldı, kalan kaynaklar atlandı.';
+			break;
+		}
 		$res = wp_remote_get( $feed['url'], array(
 			'timeout'    => 15,
 			'user-agent' => 'Mozilla/5.0 (compatible; VengHaberBot/1.0; +https://venghaber.com)',
@@ -516,13 +537,19 @@ function veng_oh_run_import() {
 		$items = array_slice( $parser( wp_remote_retrieve_body( $res ) ), 0, $items_per_feed );
 		$feed_created = 0;
 		foreach ( $items as $item ) {
+			if ( $daily['count'] >= VENG_OH_DAILY_CAP ) {
+				break;
+			}
 			if ( veng_oh_import_item( $item, $feed ) ) {
 				$feed_created++;
 				$created++;
+				$daily['count']++;
 			}
 		}
 		$lines[] = $feed['source'] . '/' . $feed['category'] . ': ' . $feed_created . ' yeni';
 	}
+
+	update_option( 'veng_oh_daily_count', $daily );
 
 	update_option( 'veng_oh_last_run', array(
 		'time'    => current_time( 'mysql' ),
@@ -658,6 +685,21 @@ function veng_oh_maybe_run_pending_wipe() {
 add_action( 'plugins_loaded', 'veng_oh_maybe_run_pending_wipe' );
 
 /**
+ * Günlük sınır (50) devreye girerken mevcut tüm otomatik haberler sıfırdan baştan
+ * temizleniyor — v1 temizliği zaten tamamlanmış kurulumlarda da bir kerelik tekrar
+ * tetiklemek için v1 bayrağını sıfırlar, var olan parça parça temizleme mekanizması
+ * (veng_oh_maybe_run_pending_wipe) bunu otomatik devralır.
+ */
+function veng_oh_trigger_fresh_restart() {
+	if ( '1' === get_option( 'veng_oh_fresh_restart_2026_09_done' ) ) {
+		return;
+	}
+	delete_option( 'veng_oh_full_wipe_v1_done' );
+	update_option( 'veng_oh_fresh_restart_2026_09_done', '1' );
+}
+add_action( 'plugins_loaded', 'veng_oh_trigger_fresh_restart', 5 );
+
+/**
  * Otomatik çekilen haberler toplamı belli bir sayıyı geçmesin diye en eskilerini siler.
  * SADECE '_veng_source_name' meta'sı olan (yani otomatik çekilmiş) yazılara dokunur —
  * elle yazılmış haberler asla silinmez. Toplu SQL kullanır (veng_oh_bulk_delete_posts),
@@ -779,6 +821,7 @@ function veng_oh_settings_page() {
 	$auto_publish = get_option( 'veng_oh_auto_publish', '1' ) === '1';
 	$last = get_option( 'veng_oh_last_run' );
 	$next_cron = wp_next_scheduled( 'veng_oh_import_event' );
+	$daily_count = veng_oh_get_daily_count();
 	global $wpdb;
 	$auto_post_count = (int) $wpdb->get_var( $wpdb->prepare(
 		"SELECT COUNT(*) FROM {$wpdb->posts} p
@@ -826,6 +869,7 @@ function veng_oh_settings_page() {
 
 		<h2>Durum</h2>
 		<p><strong>Toplam otomatik haber:</strong> <?php echo esc_html( number_format_i18n( $auto_post_count ) ); ?> (sınır yok — fazlaysa "Tüm Otomatik Haberleri Şimdi Sil" ile elle temizleyebilirsin)</p>
+		<p><strong>Bugün eklenen:</strong> <?php echo esc_html( number_format_i18n( $daily_count['count'] ) ); ?> / <?php echo esc_html( number_format_i18n( VENG_OH_DAILY_CAP ) ); ?> (sunucuyu yormamak için günlük sınır, gece yarısı sıfırlanır)</p>
 		<?php if ( $last ) : ?>
 			<p><strong>Son tarama:</strong> <?php echo esc_html( $last['time'] ); ?> — <?php echo intval( $last['created'] ); ?> yeni haber eklendi.</p>
 			<ul>
