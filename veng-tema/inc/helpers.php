@@ -39,7 +39,7 @@ function veng_render_hcard( $post_id ) {
 		<div>
 			<?php if ( $cats ) : ?><span class="cat"><?php echo esc_html( $cats[0]->name ); ?></span><?php endif; ?>
 			<h3><?php echo esc_html( get_the_title( $post_id ) ); ?></h3>
-			<div class="meta"><?php echo esc_html( veng_time_ago( get_post_time( 'U', false, $post_id ) ) ); ?></div>
+			<div class="meta"><?php echo esc_html( veng_time_ago( get_post_time( 'U', true, $post_id ) ) ); ?></div>
 		</div>
 	</a>
 	<?php
@@ -54,7 +54,7 @@ function veng_render_gcard( $post_id ) {
 		<div class="gcard-body">
 			<?php if ( $cats ) : ?><span class="badge"><?php echo esc_html( $cats[0]->name ); ?></span><?php endif; ?>
 			<h3><?php echo esc_html( get_the_title( $post_id ) ); ?></h3>
-			<time><?php echo esc_html( veng_time_ago( get_post_time( 'U', false, $post_id ) ) ); ?></time>
+			<time><?php echo esc_html( veng_time_ago( get_post_time( 'U', true, $post_id ) ) ); ?></time>
 		</div>
 	</a>
 	<?php
