@@ -16,9 +16,16 @@ function veng_post_link( $post_id ) {
 	return get_permalink( $post_id );
 }
 
-/** Öne çıkan görseli olmayan haberlerde boş gri kutu yerine "Son Dakika" rozetli bir dolgu gösterir. */
+/**
+ * Öne çıkan görseli olmayan haberlerde boş gri kutu yerine "Son Dakika" rozetli bir dolgu gösterir.
+ * alt metni kasıtlı olarak boş bırakılır (alt="") — görselin hemen üzerinde/yanında başlık zaten
+ * metin olarak görünüyor; WP varsayılan olarak alt'a başlığı yazıyordu, bu da bozuk/yavaş yüklenen
+ * görsellerde tarayıcının alt metnini görselin İÇİNDE göstermesine, başlığın bindirilmiş yazıyla
+ * birlikte "iki kere yazılmış" gibi görünmesine yol açıyordu.
+ */
 function veng_render_thumb( $post_id, $size, $attrs = array() ) {
 	if ( has_post_thumbnail( $post_id ) ) {
+		$attrs = array_merge( array( 'alt' => '' ), $attrs );
 		return get_the_post_thumbnail( $post_id, $size, $attrs );
 	}
 	return '<div class="no-img-fill"><span class="no-img-badge">Son Dakika</span></div>';
@@ -41,11 +48,15 @@ function veng_render_hcard( $post_id ) {
 function veng_render_gcard( $post_id ) {
 	$cats = get_the_category( $post_id );
 	?>
-	<a href="<?php echo esc_url( get_permalink( $post_id ) ); ?>">
-		<div class="gcard-thumb"><?php echo veng_render_thumb( $post_id, 'veng-card', array( 'loading' => 'lazy' ) ); ?></div>
-		<?php if ( $cats ) : ?><span class="cat" style="color:var(--theme);font-size:11px;font-weight:700;"><?php echo esc_html( $cats[0]->name ); ?></span><?php endif; ?>
-		<h3><?php echo esc_html( get_the_title( $post_id ) ); ?></h3>
-		<div class="meta" style="font-size:12px;color:var(--muted);"><?php echo esc_html( veng_time_ago( get_post_time( 'U', false, $post_id ) ) ); ?></div>
+	<a class="gcard" href="<?php echo esc_url( get_permalink( $post_id ) ); ?>">
+		<div class="gcard-thumb">
+			<?php echo veng_render_thumb( $post_id, 'veng-card', array( 'loading' => 'lazy' ) ); ?>
+			<div class="gcard-overlay">
+				<?php if ( $cats ) : ?><span class="gcard-cat"><?php echo esc_html( $cats[0]->name ); ?></span><?php endif; ?>
+				<h3><?php echo esc_html( get_the_title( $post_id ) ); ?></h3>
+			</div>
+		</div>
+		<div class="meta" style="font-size:12px;color:var(--muted);margin-top:6px;"><?php echo esc_html( veng_time_ago( get_post_time( 'U', false, $post_id ) ) ); ?></div>
 	</a>
 	<?php
 }
@@ -153,6 +164,27 @@ function veng_get_market_rates() {
 
 	set_transient( $cache_key, $rates, 15 * MINUTE_IN_SECONDS );
 	return $rates;
+}
+
+/** Anasayfa üstü "Son Dakika" listesi: en yeni haberler, saatiyle, dikey liste halinde. */
+function veng_render_latest_headlines_strip( $count = 8 ) {
+	$posts = get_posts( array( 'post_type' => 'post', 'posts_per_page' => $count, 'orderby' => 'date', 'order' => 'DESC' ) );
+	if ( ! $posts ) {
+		return;
+	}
+	?>
+	<div class="headlines-strip">
+		<div class="headlines-strip-label"><span class="headlines-dot"></span>Son Dakika</div>
+		<div class="headlines-strip-list">
+			<?php foreach ( $posts as $p ) : ?>
+				<a href="<?php echo esc_url( get_permalink( $p ) ); ?>">
+					<span class="headlines-time"><?php echo esc_html( date_i18n( 'H:i', get_post_time( 'U', false, $p ) ) ); ?></span>
+					<span class="headlines-title"><?php echo esc_html( get_the_title( $p ) ); ?></span>
+				</a>
+			<?php endforeach; ?>
+		</div>
+	</div>
+	<?php
 }
 
 /** Üst bardaki kayan "Son Dakika" şeridi: en yeni haberler + döviz/altın. */

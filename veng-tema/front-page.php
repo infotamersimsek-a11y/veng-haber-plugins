@@ -5,6 +5,8 @@
 
 		<h1 class="sr-only"><?php bloginfo( 'name' ); ?><?php echo get_bloginfo( 'description' ) ? ' — ' . esc_html( get_bloginfo( 'description' ) ) : ' — Güncel Haberler'; ?></h1>
 
+		<?php veng_render_latest_headlines_strip(); ?>
+
 		<?php
 		// "Öne Çıkan" etiketi süresiz geçerliydi — biri aylar önce bir haberi etiketleyip
 		// unutunca o haber kalıcı olarak en üstte kalıyor, yeni haberler hiç görünmüyordu.

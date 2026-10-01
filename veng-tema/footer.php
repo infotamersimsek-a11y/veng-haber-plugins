@@ -51,8 +51,21 @@
 			<div>
 				<h4>Kurumsal</h4>
 				<ul>
-					<?php $hakkimizda = get_page_by_path( 'hakkimizda' ); ?>
-					<?php if ( $hakkimizda ) : ?><li><a href="<?php echo esc_url( get_permalink( $hakkimizda ) ); ?>">Hakkımızda</a></li><?php endif; ?>
+					<?php
+					$veng_footer_pages = array(
+						'hakkimizda'            => 'Hakkımızda',
+						'kunye'                 => 'Künye',
+						'yayin-ilkeleri'        => 'Yayın İlkeleri',
+						'duzeltme-politikasi'   => 'Düzeltme Politikası',
+						'gizlilik-politikasi'   => 'Gizlilik Politikası',
+						'cerez-politikasi'      => 'Çerez Politikası',
+					);
+					foreach ( $veng_footer_pages as $veng_slug => $veng_label ) :
+						$veng_page = get_page_by_path( $veng_slug );
+						if ( ! $veng_page ) continue;
+						?>
+						<li><a href="<?php echo esc_url( get_permalink( $veng_page ) ); ?>"><?php echo esc_html( $veng_label ); ?></a></li>
+					<?php endforeach; ?>
 					<li><a href="<?php echo esc_url( home_url( '/iletisim/' ) ); ?>">İletişim</a></li>
 				</ul>
 			</div>
