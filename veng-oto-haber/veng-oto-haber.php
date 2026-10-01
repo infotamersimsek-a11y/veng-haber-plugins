@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.17
+ * Version: 1.0.18
  * Author: Veng Haber
  */
 
@@ -53,11 +53,12 @@ if ( file_exists( __DIR__ . '/puc/plugin-update-checker.php' ) ) {
  * Rudaw: RSS/sitemap yok ama anasayfanın kendi gömülü verisinden
  * (veng_oh_parse_rudaw_embedded) çekiliyor — resmi bir API olmadığından
  * Rudaw sitesini yeniden tasarlarsa bu kaynak sessizce 0 haber dönebilir.
+ * Sputnik Türkiye: kaldırıldı — görsellerinin üzerinde kendi logo/yazı
+ * tasarımı gömülü, Veng Haber kart/slider tasarımına uymuyor.
  */
 function veng_oh_feeds() {
 	return array(
 		array( 'url' => 'https://feeds.bbci.co.uk/turkce/rss.xml', 'category' => 'dunya', 'source' => 'BBC Türkçe' ),
-		array( 'url' => 'http://tr.sputniknews.com/export/rss2/archive/index.xml', 'category' => 'dunya', 'source' => 'Sputnik Türkiye' ),
 		array( 'url' => 'http://rss.dw.com/rdf/rss-tur-all', 'category' => 'dunya', 'source' => 'DW Türkçe' ),
 		array( 'url' => 'https://feeds.feedburner.com/euronews/tr/home', 'category' => 'dunya', 'source' => 'Euronews Türkçe' ),
 		array( 'url' => 'http://www.evrensel.net/rss/haber.xml', 'category' => 'gundem', 'source' => 'Evrensel' ),
