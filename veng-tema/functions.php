@@ -12,13 +12,16 @@ define( 'VENG_THEME_URI', get_template_directory_uri() );
 // wp-admin'de gösterir — artık zip indirip elle yüklemeye gerek yok.
 if ( file_exists( __DIR__ . '/puc/plugin-update-checker.php' ) ) {
 	require_once __DIR__ . '/puc/plugin-update-checker.php';
+	// Ayrı repo (veng-tema): doğrudan GitHub'ın kendi zip indirme adresini (codeload.github.com)
+	// kullanır — eski ortak depodaki "Release Assets" yöntemi bir Azure blob depolama
+	// adresine yönlendiriyordu, bazı hostlarda güvenlik duvarı bunu engelleyip
+	// "Paket kurulamadı" hatası veriyordu.
 	$veng_tema_update_checker = YahnisElsts\PluginUpdateChecker\v5\PucFactory::buildUpdateChecker(
-		'https://github.com/infotamersimsek-a11y/veng-haber-plugins/',
+		'https://github.com/infotamersimsek-a11y/veng-tema/',
 		__FILE__,
 		'veng'
 	);
 	$veng_tema_update_checker->setBranch( 'main' );
-	$veng_tema_update_checker->getVcsApi()->enableReleaseAssets( '/^veng-tema\.zip$/' );
 }
 
 require VENG_THEME_DIR . '/inc/setup.php';
