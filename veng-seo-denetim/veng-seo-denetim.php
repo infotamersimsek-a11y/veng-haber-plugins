@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng SEO Denetim
  * Description: Sitenin kendi canlı sayfalarını anlık tarar; Performans, SEO, Erişilebilirlik ve En İyi Uygulamalar kategorilerinde (Lighthouse/PageSpeed Insights tarzı) puanlar, Masaüstü ve Mobil için ayrı ayrı analiz yapar.
- * Version: 2.0.1
+ * Version: 2.0.2
  * Text Domain: veng-seo-denetim
  */
 
@@ -122,15 +122,16 @@ function veng_seo_image_needs_processing( $file, $max_bytes = 153600 ) {
 	return ! $is_webp || filesize( $file ) > $max_bytes;
 }
 
-/** Kaç otomatik haber görseli hedefte (WebP + 150KB altında), kaçı hâlâ işlenmeyi bekliyor. */
+/** Kaç haber görseli hedefte (WebP + 150KB altında), kaçı hâlâ işlenmeyi bekliyor. */
 function veng_seo_compression_stats() {
 	$total = 0;
 	$over = 0;
+	// Sadece botun eklediği yazılara değil, yayınlanmış TÜM yazılara bakar — elle yazılmış
+	// ya da eski sistemden kalan yazıların görselleri de sayılıp sıkıştırılabilsin diye.
 	$posts = get_posts( array(
 		'post_type'      => array( 'post', 'makale' ),
 		'post_status'    => 'publish',
 		'posts_per_page' => -1,
-		'meta_key'       => '_veng_source_name',
 		'fields'         => 'ids',
 	) );
 	foreach ( $posts as $post_id ) {
@@ -176,11 +177,13 @@ function veng_seo_backfill_compress_images( $batch_size = 25 ) {
 	}
 	$fixed = 0;
 	$remaining = 0;
+	// Daha önce sadece botun eklediği (_veng_source_name) yazılara bakıyordu — elle yazılmış
+	// ya da eski sistemden kalan yazıların görselleri hiç sıkıştırılmıyordu. Artık yayınlanmış
+	// TÜM yazılara bakar.
 	$posts = get_posts( array(
 		'post_type'      => array( 'post', 'makale' ),
 		'post_status'    => 'publish',
 		'posts_per_page' => -1,
-		'meta_key'       => '_veng_source_name',
 		'fields'         => 'ids',
 	) );
 	foreach ( $posts as $post_id ) {
@@ -216,7 +219,7 @@ function veng_seo_compress_sweep() {
 	if ( function_exists( 'set_time_limit' ) ) {
 		@set_time_limit( 0 );
 	}
-	$r = veng_seo_backfill_compress_images( 40 );
+	$r = veng_seo_backfill_compress_images( 80 );
 	update_option( 'veng_seo_last_compress_run', array(
 		'time'      => current_time( 'mysql' ),
 		'fixed'     => $r['fixed'],
