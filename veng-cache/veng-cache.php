@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Cache
  * Description: Tam sayfa önbellekleme (dosya tabanlı), gzip sıkıştırma, tarayıcı önbellek başlıkları ve veritabanı temizliği ile siteyi hızlandırır. Girişli ziyaretçilere, aramalara ve admin'e dokunmaz; yeni haber yayınlanınca önbellek otomatik temizlenir.
- * Version: 2.0.3
+ * Version: 2.0.4
  * Text Domain: veng-cache
  */
 
