@@ -84,7 +84,11 @@
 	?>
 	<nav class="categorynav">
 		<?php foreach ( $veng_nav_cats as $cat ) : ?>
-			<a href="<?php echo esc_url( get_category_link( $cat->term_id ) ); ?>"><?php echo esc_html( $cat->name ); ?></a>
+			<?php if ( 'gundem' === $cat->slug ) : ?>
+				<a href="<?php echo esc_url( home_url( '/' ) ); ?>">Veng Haber</a>
+			<?php else : ?>
+				<a href="<?php echo esc_url( get_category_link( $cat->term_id ) ); ?>"><?php echo esc_html( $cat->name ); ?></a>
+			<?php endif; ?>
 		<?php endforeach; ?>
 	</nav>
 </header>
@@ -98,7 +102,11 @@
 	<ul class="site-menu-list">
 		<li class="site-menu-item"><div class="site-menu-row"><a href="<?php echo esc_url( home_url( '/' ) ); ?>">Ana Sayfa</a></div></li>
 		<?php foreach ( $veng_nav_cats as $cat ) : ?>
-			<li class="site-menu-item"><div class="site-menu-row"><a href="<?php echo esc_url( get_category_link( $cat->term_id ) ); ?>"><?php echo esc_html( $cat->name ); ?></a></div></li>
+			<?php if ( 'gundem' === $cat->slug ) : ?>
+				<li class="site-menu-item"><div class="site-menu-row"><a href="<?php echo esc_url( home_url( '/' ) ); ?>">Veng Haber</a></div></li>
+			<?php else : ?>
+				<li class="site-menu-item"><div class="site-menu-row"><a href="<?php echo esc_url( get_category_link( $cat->term_id ) ); ?>"><?php echo esc_html( $cat->name ); ?></a></div></li>
+			<?php endif; ?>
 		<?php endforeach; ?>
 	</ul>
 </nav>
