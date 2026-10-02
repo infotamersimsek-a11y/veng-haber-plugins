@@ -29,7 +29,13 @@ if ( file_exists( __DIR__ . '/puc/plugin-update-checker.php' ) ) {
 		'veng-oto-haber'
 	);
 	$veng_oh_update_checker->setBranch( 'main' );
-	$veng_oh_update_checker->getVcsApi()->enableReleaseAssets( '/^veng-oto-haber\.zip$/' );
+	$veng_oh_vcs_api = $veng_oh_update_checker->getVcsApi();
+	$veng_oh_vcs_api->enableReleaseAssets( '/^veng-oto-haber\.zip$/' );
+	// Aynı GitHub deposunu 3 eklenti + tema paylaşıyor — filtre olmadan PUC depodaki
+	// EN SON release'i (hangi bileşene ait olduğuna bakmadan) alıyor, bu da "yeni sürüm
+	// var" bildirimi yanlış bileşenin (ör. veng-cache'in) sürümünü göstermesine yol
+	// açıyordu. Oto Haber etiketleri sade "vX.Y.Z" (eksiz) olduğu için sadece onları eşler.
+	$veng_oh_vcs_api->setReleaseVersionFilter( '/^\d+\.\d+\.\d+$/' );
 }
 
 /**

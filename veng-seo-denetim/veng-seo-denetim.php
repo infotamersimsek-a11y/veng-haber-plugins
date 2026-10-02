@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng SEO Denetim
  * Description: Sitenin kendi canlı sayfalarını anlık tarar; Performans, SEO, Erişilebilirlik ve En İyi Uygulamalar kategorilerinde (Lighthouse/PageSpeed Insights tarzı) puanlar, Masaüstü ve Mobil için ayrı ayrı analiz yapar.
- * Version: 2.0.2
+ * Version: 2.0.3
  * Text Domain: veng-seo-denetim
  */
 
@@ -20,7 +20,12 @@ if ( file_exists( __DIR__ . '/puc/plugin-update-checker.php' ) ) {
 		'veng-seo-denetim'
 	);
 	$veng_seo_update_checker->setBranch( 'main' );
-	$veng_seo_update_checker->getVcsApi()->enableReleaseAssets( '/^veng-seo-denetim\.zip$/' );
+	$veng_seo_vcs_api = $veng_seo_update_checker->getVcsApi();
+	$veng_seo_vcs_api->enableReleaseAssets( '/^veng-seo-denetim\.zip$/' );
+	// Aynı GitHub deposunu 3 eklenti + tema paylaşıyor — filtre olmadan PUC depodaki
+	// EN SON release'i (hangi bileşene ait olduğuna bakmadan) alıyor. SEO Denetim etiketleri
+	// "-seo" sonekli olduğu için sadece onları eşler.
+	$veng_seo_vcs_api->setReleaseVersionFilter( '/-seo$/' );
 }
 
 function veng_seo_log( $msg ) {

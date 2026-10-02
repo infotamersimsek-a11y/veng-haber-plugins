@@ -20,7 +20,12 @@ if ( file_exists( __DIR__ . '/puc/plugin-update-checker.php' ) ) {
 		'veng-cache'
 	);
 	$veng_cache_update_checker->setBranch( 'main' );
-	$veng_cache_update_checker->getVcsApi()->enableReleaseAssets( '/^veng-cache\.zip$/' );
+	$veng_cache_vcs_api = $veng_cache_update_checker->getVcsApi();
+	$veng_cache_vcs_api->enableReleaseAssets( '/^veng-cache\.zip$/' );
+	// Aynı GitHub deposunu 3 eklenti + tema paylaşıyor — filtre olmadan PUC depodaki
+	// EN SON release'i (hangi bileşene ait olduğuna bakmadan) alıyor. Veng Cache etiketleri
+	// "-cache" sonekli olduğu için sadece onları eşler.
+	$veng_cache_vcs_api->setReleaseVersionFilter( '/-cache$/' );
 }
 
 define( 'VENG_CACHE_DIR', WP_CONTENT_DIR . '/cache/veng-cache/' );
