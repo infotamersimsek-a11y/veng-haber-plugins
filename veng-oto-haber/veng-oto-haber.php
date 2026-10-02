@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.19
+ * Version: 1.0.20
  * Author: Veng Haber
  */
 
@@ -413,6 +413,27 @@ function veng_oh_classify_category_slug( $title, $summary, $default_slug ) {
 	return $default_slug;
 }
 
+/**
+ * Bazı kategoriler sitede farklı slug'la kurulmuş olabilir (ör. 'siyaset' yerine 'politika')
+ * — tema menüsündeki (header.php) aday eşleşmesiyle aynı mantık. Bu olmadan, sitede kategori
+ * 'politika' diye kuruluysa get_category_by_slug('siyaset') hep boş döner, sınıflandırılan
+ * siyaset haberleri hiçbir kategoriye düşmeden (kategorisiz) kalırdı.
+ */
+function veng_oh_resolve_category_by_slug( $slug ) {
+	$aliases = array(
+		'siyaset' => array( 'siyaset', 'politika' ),
+		'saglik'  => array( 'saglik', 'saglik-haberleri' ),
+	);
+	$candidates = $aliases[ $slug ] ?? array( $slug );
+	foreach ( $candidates as $candidate ) {
+		$cat = get_category_by_slug( $candidate );
+		if ( $cat ) {
+			return $cat;
+		}
+	}
+	return null;
+}
+
 /** Tek kaynaklı eski çağrı şekli — geriye dönük uyumluluk için (acil kategori doldurma bunu kullanıyor). */
 function veng_oh_import_item( $item, $feed ) {
 	return veng_oh_import_story( array( array( 'item' => $item, 'feed' => $feed ) ) );
@@ -449,7 +470,7 @@ function veng_oh_import_story( $story ) {
 	$primary = $story[0];
 	$combined_text = implode( ' ', array_map( function ( $c ) { return $c['item']['title'] . ' ' . $c['item']['summary']; }, $story ) );
 	$category_slug = veng_oh_classify_category_slug( $primary['item']['title'], $combined_text, $primary['feed']['category'] );
-	$category = get_category_by_slug( $category_slug );
+	$category = veng_oh_resolve_category_by_slug( $category_slug );
 
 	$title = $primary['item']['title'];
 	$excerpt = mb_substr( $primary['item']['summary'], 0, 300 );
@@ -766,8 +787,11 @@ function veng_oh_group_and_pick_stories( $candidates, $limit ) {
 
 	$prompt = "Aşağıda bu saat içinde yayına aday " . count( $candidates ) . " haber başlığı var. Farklı kaynaklardan gelen ama AYNI olayı/konuyu anlatan başlıkları aynı grupta topla (ör. 3 farklı kaynak aynı saldırıyı/açıklamayı farklı başlıklarla veriyorsa bunlar bir grup). Konusu farklı olanları tek başına kendi grubunda bırak.\n\n"
 		. "Sonra grupları editöryel önceliğe göre sırala ve en öncelikli {$limit} grubu seç.\n"
-		. "Öncelik ver: can kaybı/yaralanma, patlama/saldırı/afet, geniş kitleyi etkileyen resmi karar/açıklama (yargı, ekonomi, seçim, güvenlik), bölgeyi (Diyarbakır ve çevresi, Kürt bölgesi) doğrudan ilgilendiren gelişmeler.\n"
-		. "Düşük öncelik ver: rutin spor sonucu, magazin, tekrar eden/az bilgi içeren haberler.\n\n"
+		. "Öncelik ver (yüksekten düşüğe):\n"
+		. "1) Kürt coğrafyasını (Diyarbakır, Mardin, Batman, Urfa/Şanlıurfa, Van, Hakkari, Şırnak, Siirt, Ağrı, Muş, Bitlis gibi doğu/güneydoğu illeri) ve Kürtlerle ilgili HER konudaki haberler (siyaset, kültür-sanat, toplum, ekonomi fark etmez) — bu sitenin ana odağı, bunlara geniş yer ver.\n"
+		. "2) Dünya gündemini doğrudan ilgilendiren önemli gelişmeler (uluslararası siyaset, savaş/çatışma, büyük afet, dünya kültür-sanatı).\n"
+		. "3) Bölge fark etmeksizin ÇOK önemli gelişmeler: can kaybı/yaralanma, patlama/saldırı/afet, geniş kitleyi etkileyen kritik resmi karar/açıklama (yargı, ekonomi, seçim, güvenlik).\n"
+		. "Düşük öncelik ver: Türkiye geneliyle ilgili ama yukarıdaki 3. maddeye girmeyen sıradan/rutin iç haberler (ana akım medyada her gün çıkan türden, bölgeyle/Kürtlerle doğrudan ilgisi olmayan) — bu site ana akım Türkiye medyası gibi davranmasın, Türkiye haberlerine sadece gerçekten önemliyse yer versin. Rutin spor sonucu, magazin, tekrar eden/az bilgi içeren haberler de düşük öncelikli.\n\n"
 		. $list . "\n"
 		. "Sadece seçtiğin {$limit} grubu, her grubun aday numaralarını içeren bir dizi dizisi olarak JSON döndür, başka hiçbir şey yazma: {\"groups\": [[3, 7], [1], [5, 2, 9]]}";
 
@@ -1107,7 +1131,7 @@ function veng_oh_category_needs( $min = 6 ) {
 	$slugs = array( 'dunya', 'gundem', 'ekonomi', 'siyaset', 'spor', 'teknoloji', 'saglik', 'kultur-sanat', 'magazin', 'yasam' );
 	$needs = array();
 	foreach ( $slugs as $slug ) {
-		$cat = get_category_by_slug( $slug );
+		$cat = veng_oh_resolve_category_by_slug( $slug );
 		if ( ! $cat ) {
 			continue;
 		}
