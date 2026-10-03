@@ -178,16 +178,18 @@ function veng_get_market_rates() {
  * sorun değil, tam ekran slide'da kötü) — bu yüzden hero SADECE öne çıkan görseli olan
  * yazılardan seçilir. Ayrıca RSS kaynağından gelen görseller (og:image) genelde küçük
  * boyutlu oluyor — hero 1200px genişliğinde gösterildiği için küçük bir görsel büyütülünce
- * bulanık/pikselli çıkıyordu. Gerçek genişliği 800px'in altında olan görseller hero'ya hiç
- * girmesin diye adaylar filtrelenir (daha fazla aday çekilip içlerinden yeterli çözünürlüklü
- * olanlar seçilir, az bulunursa döngü sessizce daha az slide ile devam eder).
+ * bulanık/pikselli çıkıyordu. Gerçek genişliği 600px'in altında olan (belirgin şekilde
+ * bulanıklaşacak) görseller hero'ya girmez; 800'lük eşik az içerikle çok fazla yazıyı
+ * eliyordu, 600 daha dengeli. Adaylar sabit 100 yazılık havuzdan taranır (toplam yazı
+ * sayısı $count*3'ten büyükse hepsini görebilmek için), az bulunursa döngü sessizce daha
+ * az slide ile devam eder.
  */
 function veng_render_hero_slider( $count = 20 ) {
-	$candidates = get_posts( array( 'post_type' => 'post', 'posts_per_page' => $count * 3, 'orderby' => 'date', 'order' => 'DESC', 'meta_key' => '_thumbnail_id' ) );
+	$candidates = get_posts( array( 'post_type' => 'post', 'posts_per_page' => 100, 'orderby' => 'date', 'order' => 'DESC', 'meta_key' => '_thumbnail_id' ) );
 	$posts = array();
 	foreach ( $candidates as $p ) {
 		$thumb_meta = wp_get_attachment_metadata( get_post_thumbnail_id( $p->ID ) );
-		if ( ! empty( $thumb_meta['width'] ) && $thumb_meta['width'] >= 800 ) {
+		if ( ! empty( $thumb_meta['width'] ) && $thumb_meta['width'] >= 600 ) {
 			$posts[] = $p;
 		}
 		if ( count( $posts ) >= $count ) {
