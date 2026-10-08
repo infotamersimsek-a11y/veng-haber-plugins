@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.23
+ * Version: 1.0.24
  * Author: Veng Haber
  */
 
@@ -44,13 +44,12 @@ if ( file_exists( __DIR__ . '/puc/plugin-update-checker.php' ) ) {
  * News sitemap formatı (özet/görsel yok, madde başına ayrıca makale
  * sayfasından og:description/og:image çekilir).
  *
- * Mezopotamya Ajansı: çalışanları PKK'nın "basın komitesi" bağlantısı iddiasıyla
- * tutuklandı, Almanya'da Özgür Politika ile birlikte kapatıldı — bu bilinerek, site
- * sahibinin açık talimatıyla eklendi. Sitesi tekrar tekrar engellenip numaralı yedek
- * alan adına (şu an "44") taşındığı için kendiliğinden imzalı (self-signed) SSL
- * sertifikası kullanıyor, bu yüzden 'sslverify' => false gerekiyor. Alan adı
- * değiştiğinde (ör. "45" olduğunda) bu URL elle güncellenmeli, otomatik takip
- * mekanizması kurulmadı.
+ * Mezopotamya Ajansı: ÇIKARILDI (2026-10-08). "44" alan adı Ankara 1. Sulh Ceza
+ * Hâkimliği'nin 2026/13886 D.İş sayılı kararıyla resmen erişime engellenmiş durumda
+ * (mahkeme kararı, teknik bir arıza değil). Bu kaynak için otomatik "bir sonraki
+ * numaralı alan adına geç" mekanizması bilinçli olarak kurulmadı — bu, mahkeme
+ * kararlarını sistematik olarak atlatan bir altyapı kurmak anlamına gelir, bunu
+ * yapmıyoruz. İstenirse farklı, engellenmemiş bir Kürt bölgesi kaynağı değerlendirilebilir.
  *
  * Dışarıda bırakılanlar (araştırılıp bilinçli olarak eklenmedi):
  * - Ajansa Welat (ajansawelat1.com) / Azadiya Welat: 2016'da "terör örgütü
@@ -77,7 +76,6 @@ function veng_oh_feeds() {
 		array( 'url' => 'https://www.birgun.net/rss/home', 'category' => 'gundem', 'source' => 'BirGün' ),
 		array( 'url' => 'https://www.mucadelegazetesi.com.tr/sitemap-news.xml', 'category' => 'gundem', 'source' => 'Mücadele Gazetesi', 'type' => 'newssitemap' ),
 		array( 'url' => 'https://www.rudaw.net/turkish', 'category' => 'dunya', 'source' => 'Rudaw', 'type' => 'rudaw_embedded' ),
-		array( 'url' => 'https://mezopotamyaajansi44.com/feed/', 'category' => 'gundem', 'source' => 'Mezopotamya Ajansı', 'sslverify' => false ),
 	);
 }
 
@@ -198,6 +196,27 @@ function veng_oh_parse_newssitemap( $xml ) {
 }
 
 /** RSS/sitemap'te özet ya da görsel gelmediyse makale sayfasından og:description / og:image çeker. */
+/**
+ * <meta property="..." content="..."> içinden content değerini bulur — öznitelik SIRASINA
+ * bakmaz (bazı siteler content'i property'den önce yazıyor: <meta content="..." property="...">).
+ * Eski kod sadece property-önce sırasını eşleştiriyordu; bu yüzden geçerli bir og:image'ı
+ * olan sayfalar bile "görselsiz" sayılıp yanlışlıkla boş bırakılıyordu.
+ */
+function veng_oh_match_meta_content( $html, $property ) {
+	if ( ! preg_match_all( '/<meta\b[^>]*>/i', $html, $tags ) ) {
+		return '';
+	}
+	foreach ( $tags[0] as $tag ) {
+		if ( ! preg_match( '/\bproperty=["\']' . preg_quote( $property, '/' ) . '["\']/i', $tag ) ) {
+			continue;
+		}
+		if ( preg_match( '/\bcontent=["\']([^"\']*)["\']/i', $tag, $m ) ) {
+			return $m[1];
+		}
+	}
+	return '';
+}
+
 function veng_oh_fetch_og_meta( $url ) {
 	$res = wp_remote_get( $url, array(
 		'timeout'    => 12,
@@ -207,16 +226,10 @@ function veng_oh_fetch_og_meta( $url ) {
 		return array( 'summary' => '', 'image' => '' );
 	}
 	$html = wp_remote_retrieve_body( $res );
-	$summary = '';
-	$image = '';
-	if ( preg_match( '/<meta[^>]*property=["\']og:description["\'][^>]*content=["\']([^"\']*)["\']/i', $html, $m ) ) {
-		$summary = veng_oh_strip( $m[1] );
-	}
-	if ( preg_match( '/<meta[^>]*property=["\']og:image["\'][^>]*content=["\']([^"\']*)["\']/i', $html, $m ) ) {
-		// HTML özniteliklerinde & işareti &amp; olarak kaçırılır — decode etmeden kullanınca
-		// sorgu parametreli görsel URL'leri (ör. Rudaw'ın Next.js image proxy'si) bozuluyordu.
-		$image = html_entity_decode( $m[1], ENT_QUOTES, 'UTF-8' );
-	}
+	$summary = veng_oh_strip( veng_oh_match_meta_content( $html, 'og:description' ) );
+	// HTML özniteliklerinde & işareti &amp; olarak kaçırılır — decode etmeden kullanınca
+	// sorgu parametreli görsel URL'leri (ör. Rudaw'ın Next.js image proxy'si) bozuluyordu.
+	$image = html_entity_decode( veng_oh_match_meta_content( $html, 'og:image' ), ENT_QUOTES, 'UTF-8' );
 	return array( 'summary' => $summary, 'image' => $image );
 }
 
