@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.22
+ * Version: 1.0.23
  * Author: Veng Haber
  */
 
@@ -44,9 +44,15 @@ if ( file_exists( __DIR__ . '/puc/plugin-update-checker.php' ) ) {
  * News sitemap formatı (özet/görsel yok, madde başına ayrıca makale
  * sayfasından og:description/og:image çekilir).
  *
+ * Mezopotamya Ajansı: çalışanları PKK'nın "basın komitesi" bağlantısı iddiasıyla
+ * tutuklandı, Almanya'da Özgür Politika ile birlikte kapatıldı — bu bilinerek, site
+ * sahibinin açık talimatıyla eklendi. Sitesi tekrar tekrar engellenip numaralı yedek
+ * alan adına (şu an "44") taşındığı için kendiliğinden imzalı (self-signed) SSL
+ * sertifikası kullanıyor, bu yüzden 'sslverify' => false gerekiyor. Alan adı
+ * değiştiğinde (ör. "45" olduğunda) bu URL elle güncellenmeli, otomatik takip
+ * mekanizması kurulmadı.
+ *
  * Dışarıda bırakılanlar (araştırılıp bilinçli olarak eklenmedi):
- * - Mezopotamya Ajansı: çalışanları PKK'nın "basın komitesi" bağlantısı
- *   iddiasıyla tutuklandı, Almanya'da Özgür Politika ile birlikte kapatıldı.
  * - Ajansa Welat (ajansawelat1.com) / Azadiya Welat: 2016'da "terör örgütü
  *   propagandası" gerekçesiyle KHK ile kapatıldı; "1" ekli alan adı, bloke
  *   edilen Kürt yayın organlarında sık görülen yedek-domain deseniyle
@@ -71,6 +77,7 @@ function veng_oh_feeds() {
 		array( 'url' => 'https://www.birgun.net/rss/home', 'category' => 'gundem', 'source' => 'BirGün' ),
 		array( 'url' => 'https://www.mucadelegazetesi.com.tr/sitemap-news.xml', 'category' => 'gundem', 'source' => 'Mücadele Gazetesi', 'type' => 'newssitemap' ),
 		array( 'url' => 'https://www.rudaw.net/turkish', 'category' => 'dunya', 'source' => 'Rudaw', 'type' => 'rudaw_embedded' ),
+		array( 'url' => 'https://mezopotamyaajansi44.com/feed/', 'category' => 'gundem', 'source' => 'Mezopotamya Ajansı', 'sslverify' => false ),
 	);
 }
 
@@ -702,6 +709,7 @@ function veng_oh_run_import() {
 		$res = wp_remote_get( $feed['url'], array(
 			'timeout'    => 15,
 			'user-agent' => 'Mozilla/5.0 (compatible; VengHaberBot/1.0; +https://venghaber.com)',
+			'sslverify'  => $feed['sslverify'] ?? true,
 		) );
 		if ( is_wp_error( $res ) || wp_remote_retrieve_response_code( $res ) !== 200 ) {
 			$lines[] = $feed['source'] . '/' . $feed['category'] . ': alınamadı';
@@ -1165,6 +1173,7 @@ function veng_oh_run_emergency_category_fill( $max_imports_per_run = 6 ) {
 		$res = wp_remote_get( $feed['url'], array(
 			'timeout'    => 15,
 			'user-agent' => 'Mozilla/5.0 (compatible; VengHaberBot/1.0; +https://venghaber.com)',
+			'sslverify'  => $feed['sslverify'] ?? true,
 		) );
 		if ( is_wp_error( $res ) || wp_remote_retrieve_response_code( $res ) !== 200 ) {
 			continue;
