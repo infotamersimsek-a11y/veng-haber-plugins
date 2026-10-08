@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.25
+ * Version: 1.0.26
  * Author: Veng Haber
  */
 
@@ -76,6 +76,12 @@ function veng_oh_feeds() {
 		array( 'url' => 'https://www.birgun.net/rss/home', 'category' => 'gundem', 'source' => 'BirGün' ),
 		array( 'url' => 'https://www.mucadelegazetesi.com.tr/sitemap-news.xml', 'category' => 'gundem', 'source' => 'Mücadele Gazetesi', 'type' => 'newssitemap' ),
 		array( 'url' => 'https://www.rudaw.net/turkish', 'category' => 'dunya', 'source' => 'Rudaw', 'type' => 'rudaw_embedded' ),
+		array( 'url' => 'https://bianet.org/rss/bianet', 'category' => 'gundem', 'source' => 'Bianet' ),
+		// Channel8: PUK/KRG çevresine bağlı, 2023'te kurulmuş Kürt haber kanalı (Mezopotamya
+		// Ajansı/Medya TV soyundan farklı, bilinen bir yasak/mahkeme kararı yok). RSS adresi
+		// doğrulanamadı (otomatik denemede Cloudflare 403 verdi) — çalışmazsa logda "alınamadı"
+		// görünür, gerekirse adres güncellenir.
+		array( 'url' => 'https://channel8.com/turkce/feed/', 'category' => 'gundem', 'source' => 'Channel8' ),
 	);
 
 	// Mezopotamya Ajansı: alan adı mahkeme kararıyla sık sık engelleniyor, otomatik bir
@@ -829,6 +835,7 @@ function veng_oh_group_and_pick_stories( $candidates, $limit ) {
 		. "2) Dünya gündemini doğrudan ilgilendiren önemli gelişmeler (uluslararası siyaset, savaş/çatışma, büyük afet, dünya kültür-sanatı).\n"
 		. "3) Bölge fark etmeksizin ÇOK önemli gelişmeler: can kaybı/yaralanma, patlama/saldırı/afet, geniş kitleyi etkileyen kritik resmi karar/açıklama (yargı, ekonomi, seçim, güvenlik).\n"
 		. "Düşük öncelik ver: Türkiye geneliyle ilgili ama yukarıdaki 3. maddeye girmeyen sıradan/rutin iç haberler (ana akım medyada her gün çıkan türden, bölgeyle/Kürtlerle doğrudan ilgisi olmayan) — bu site ana akım Türkiye medyası gibi davranmasın, Türkiye haberlerine sadece gerçekten önemliyse yer versin. Rutin spor sonucu, magazin, tekrar eden/az bilgi içeren haberler de düşük öncelikli.\n\n"
+		. "Kaynak dağılımı: elinde yeterli aday varsa, seçtiğin {$limit} grubun yaklaşık %70'i şu kaynaklardan olsun: Mezopotamya Ajansı, Bianet, Rudaw, Channel8 (Kürt bölgesi/siyaseti odaklı kaynaklar). Bu oranı tutturacak kadar aday yoksa (ör. o kaynaklardan o saat az haber gelmişse) zorlama, mevcut en iyi adaylardan seç — asıl öncelik yukarıdaki 1-2-3 sıralaması.\n\n"
 		. $list . "\n"
 		. "Sadece seçtiğin {$limit} grubu, her grubun aday numaralarını içeren bir dizi dizisi olarak JSON döndür, başka hiçbir şey yazma: {\"groups\": [[3, 7], [1], [5, 2, 9]]}";
 
