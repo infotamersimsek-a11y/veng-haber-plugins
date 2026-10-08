@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.24
+ * Version: 1.0.25
  * Author: Veng Haber
  */
 
@@ -44,12 +44,12 @@ if ( file_exists( __DIR__ . '/puc/plugin-update-checker.php' ) ) {
  * News sitemap formatı (özet/görsel yok, madde başına ayrıca makale
  * sayfasından og:description/og:image çekilir).
  *
- * Mezopotamya Ajansı: ÇIKARILDI (2026-10-08). "44" alan adı Ankara 1. Sulh Ceza
- * Hâkimliği'nin 2026/13886 D.İş sayılı kararıyla resmen erişime engellenmiş durumda
- * (mahkeme kararı, teknik bir arıza değil). Bu kaynak için otomatik "bir sonraki
- * numaralı alan adına geç" mekanizması bilinçli olarak kurulmadı — bu, mahkeme
- * kararlarını sistematik olarak atlatan bir altyapı kurmak anlamına gelir, bunu
- * yapmıyoruz. İstenirse farklı, engellenmemiş bir Kürt bölgesi kaynağı değerlendirilebilir.
+ * Mezopotamya Ajansı: "44" alan adı Ankara 1. Sulh Ceza Hâkimliği'nin 2026/13886 D.İş
+ * sayılı kararıyla engellendi (2026-10-08), yerine site sahibinin verdiği "45" elle
+ * eklendi. BİLİNÇLİ OLARAK otomatik "engellenince bir sonraki numaraya geç" mekanizması
+ * KURULMADI — bu mahkeme kararlarını sistematik atlatan bir altyapı olurdu. Alan adı
+ * tekrar değişirse (büyük ihtimalle değişecek) site sahibi yeni adresi bildirip bu
+ * satırın elle güncellenmesini istemeli; kendiliğinden bir sonrakine geçmez.
  *
  * Dışarıda bırakılanlar (araştırılıp bilinçli olarak eklenmedi):
  * - Ajansa Welat (ajansawelat1.com) / Azadiya Welat: 2016'da "terör örgütü
@@ -68,7 +68,7 @@ if ( file_exists( __DIR__ . '/puc/plugin-update-checker.php' ) ) {
  * tasarımı gömülü, Veng Haber kart/slider tasarımına uymuyor.
  */
 function veng_oh_feeds() {
-	return array(
+	$feeds = array(
 		array( 'url' => 'https://feeds.bbci.co.uk/turkce/rss.xml', 'category' => 'dunya', 'source' => 'BBC Türkçe' ),
 		array( 'url' => 'http://rss.dw.com/rdf/rss-tur-all', 'category' => 'dunya', 'source' => 'DW Türkçe' ),
 		array( 'url' => 'https://feeds.feedburner.com/euronews/tr/home', 'category' => 'dunya', 'source' => 'Euronews Türkçe' ),
@@ -77,6 +77,16 @@ function veng_oh_feeds() {
 		array( 'url' => 'https://www.mucadelegazetesi.com.tr/sitemap-news.xml', 'category' => 'gundem', 'source' => 'Mücadele Gazetesi', 'type' => 'newssitemap' ),
 		array( 'url' => 'https://www.rudaw.net/turkish', 'category' => 'dunya', 'source' => 'Rudaw', 'type' => 'rudaw_embedded' ),
 	);
+
+	// Mezopotamya Ajansı: alan adı mahkeme kararıyla sık sık engelleniyor, otomatik bir
+	// sonraki numaraya geçme mekanizması bilinçli kurulmadı. Bunun yerine adres Oto Haber
+	// ayarlarından (veng_oh_mezopotamya_url) elle girilir/güncellenir; boşsa kaynak atlanır.
+	$mezopotamya_url = get_option( 'veng_oh_mezopotamya_url', '' );
+	if ( $mezopotamya_url ) {
+		$feeds[] = array( 'url' => $mezopotamya_url, 'category' => 'gundem', 'source' => 'Mezopotamya Ajansı', 'sslverify' => false );
+	}
+
+	return $feeds;
 }
 
 function veng_oh_strip( $str ) {
@@ -1393,6 +1403,10 @@ function veng_oh_settings_page() {
 	if ( isset( $_POST['veng_oh_save_settings'] ) && check_admin_referer( 'veng_oh_settings' ) ) {
 		update_option( 'veng_oh_anthropic_api_key', sanitize_text_field( wp_unslash( $_POST['veng_oh_anthropic_api_key'] ?? '' ) ) );
 		update_option( 'veng_oh_auto_publish', isset( $_POST['veng_oh_auto_publish'] ) ? '1' : '0' );
+		// Mezopotamya Ajansı sık sık engellenip alan adı değiştiriyor — otomatik takip
+		// mekanizması bilinçli kurulmadı (mahkeme kararlarını atlatmak olurdu), onun yerine
+		// site sahibi yeni adresi buradan kendisi girer.
+		update_option( 'veng_oh_mezopotamya_url', esc_url_raw( wp_unslash( $_POST['veng_oh_mezopotamya_url'] ?? '' ) ) );
 		echo '<div class="notice notice-success"><p>Ayarlar kaydedildi.</p></div>';
 	}
 
@@ -1489,6 +1503,13 @@ function veng_oh_settings_page() {
 					<th>Otomatik yayınla</th>
 					<td>
 						<label><input type="checkbox" name="veng_oh_auto_publish" <?php checked( $auto_publish ); ?> /> Çekilen haberleri direkt yayınla (kapalıysa taslak olarak eklenir)</label>
+					</td>
+				</tr>
+				<tr>
+					<th><label for="veng_oh_mezopotamya_url">Mezopotamya Ajansı RSS Adresi</label></th>
+					<td>
+						<input type="text" id="veng_oh_mezopotamya_url" name="veng_oh_mezopotamya_url" value="<?php echo esc_attr( get_option( 'veng_oh_mezopotamya_url', '' ) ); ?>" class="regular-text" placeholder="https://mezopotamyaajansiXX.com/feed/" />
+						<p class="description">Bu kaynağın alan adı mahkeme kararıyla sık sık engelleniyor. Otomatik takip kurulmadı — alan adı değiştiğinde yeni adresi buraya kendin yapıştır, boş bırakırsan bu kaynak taramaya hiç dahil edilmez.</p>
 					</td>
 				</tr>
 			</table>
