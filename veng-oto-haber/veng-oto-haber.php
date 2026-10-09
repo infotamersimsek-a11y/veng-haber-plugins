@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.28
+ * Version: 1.0.29
  * Author: Veng Haber
  */
 
@@ -1523,6 +1523,11 @@ function veng_oh_settings_page() {
 		echo '<div class="notice notice-success"><p>Manuel tarama tamamlandı: ' . intval( $created ) . ' yeni haber eklendi.</p></div>';
 	}
 
+	if ( isset( $_POST['veng_oh_reset_daily_count'] ) && check_admin_referer( 'veng_oh_settings' ) ) {
+		delete_option( 'veng_oh_daily_count' );
+		echo '<div class="notice notice-success"><p>Günlük sayaç (toplam + bölge dağılımı) sıfırlandı. Bu sadece sayacı sıfırlar, yazı silmez.</p></div>';
+	}
+
 	if ( isset( $_POST['veng_oh_backfill_alt'] ) && check_admin_referer( 'veng_oh_settings' ) ) {
 		$fixed = veng_oh_backfill_image_alt();
 		echo '<div class="notice notice-success"><p>Görsel alt metni dolduruldu: ' . intval( $fixed ) . ' görsel güncellendi.</p></div>';
@@ -1624,6 +1629,7 @@ function veng_oh_settings_page() {
 			<p class="submit">
 				<button type="submit" name="veng_oh_save_settings" class="button button-primary">Ayarları Kaydet</button>
 				<button type="submit" name="veng_oh_run_now" class="button">Şimdi Çalıştır</button>
+				<button type="submit" name="veng_oh_reset_daily_count" class="button" onclick="return confirm('Bugünkü sayaç (toplam + Kürt/Dünya/Diğer dağılımı) sıfırlanacak. Yazı silinmez, sadece sayaç. Emin misin?');">Günlük Sayacı Sıfırla</button>
 				<button type="submit" name="veng_oh_backfill_alt" class="button">Eski Görsellere Alt Metin Doldur</button>
 				<button type="submit" name="veng_oh_backfill_images" class="button">Eksik Görselleri Tespit Et ve Yükle</button>
 				<button type="submit" name="veng_oh_backfill_attribution" class="button">Kaynak Notunu Sadeleştir</button>
