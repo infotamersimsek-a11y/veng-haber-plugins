@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.29
+ * Version: 1.0.30
  * Author: Veng Haber
  */
 
@@ -97,21 +97,20 @@ function veng_oh_feeds() {
 		array( 'url' => 'https://bianet.org/rss/bianet', 'category' => 'gundem', 'source' => 'Bianet', 'region' => 'kurdish' ),
 		// Channel8: PUK/KRG çevresine bağlı, 2023'te kurulmuş Kürt haber kanalı (Mezopotamya
 		// Ajansı/Medya TV soyundan farklı, bilinen bir yasak/mahkeme kararı yok).
-		array( 'url' => 'https://channel8.com/turkce/feed/', 'category' => 'gundem', 'source' => 'Channel8', 'region' => 'kurdish', 'user_agent' => $browser_ua ),
+		// Channel8'in RSS'i yok ama düz bir sitemap.xml'i var (<loc> URL listesi, başlık/özet
+		// yok) — veng_oh_parse_channel8_sitemap() her haber linkinin kendi sayfasından
+		// og:title/og:description/og:image'ını ayrıca çekiyor.
+		array( 'url' => 'https://channel8.com/turkce/sitemap.xml', 'category' => 'gundem', 'source' => 'Channel8', 'region' => 'kurdish', 'user_agent' => $browser_ua, 'type' => 'channel8_sitemap' ),
 	);
 
 	// Mezopotamya Ajansı: alan adı mahkeme kararıyla sık sık engelleniyor, otomatik bir
 	// sonraki numaraya geçme mekanizması bilinçli kurulmadı. Bunun yerine adres Oto Haber
 	// ayarlarından (veng_oh_mezopotamya_url) elle girilir/güncellenir; boşsa kaynak atlanır.
-	// Kullanıcı genelde ana sayfa adresini yapıştırıyor (RSS yolunu değil) — '/feed/' zaten
-	// yoksa otomatik eklenir.
+	// RSS'i yok — anasayfanın KENDİSİ taranıyor (bkz. veng_oh_parse_mezopotamya), bu yüzden
+	// '/feed/' EKLENMEZ, kullanıcının girdiği ana sayfa adresi doğrudan kullanılır.
 	$mezopotamya_url = trim( get_option( 'veng_oh_mezopotamya_url', '' ) );
 	if ( $mezopotamya_url ) {
-		$normalized = rtrim( $mezopotamya_url, '/' );
-		if ( false === stripos( $normalized, '/feed' ) && ! preg_match( '/\.(xml|rss)$/i', $normalized ) ) {
-			$normalized .= '/feed/';
-		}
-		$feeds[] = array( 'url' => $normalized, 'category' => 'gundem', 'source' => 'Mezopotamya Ajansı', 'sslverify' => false, 'region' => 'kurdish' );
+		$feeds[] = array( 'url' => rtrim( $mezopotamya_url, '/' ) . '/', 'category' => 'gundem', 'source' => 'Mezopotamya Ajansı', 'sslverify' => false, 'region' => 'kurdish', 'type' => 'mezopotamya_embedded' );
 	}
 
 	return $feeds;
@@ -223,6 +222,82 @@ function veng_oh_parse_rudaw_embedded( $html ) {
 	return $items;
 }
 
+/**
+ * Mezopotamya Ajansı'nın RSS'i/sitemap'i yok (ne /feed, ne /rss, ne /sitemap.xml —
+ * hepsi sessizce anasayfaya düşüyor, framework'ün tanımadığı her adrese anasayfayı
+ * basıyor) — ama anasayfanın KENDİSİ gerçek haber kartlarını (başlık+görsel+link) düz
+ * HTML olarak içeriyor, Rudaw'daki gibi JS'e gömülü değil. Kart deseni:
+ * <a href="/KATEGORI/content/view/ID" class="image-link"><img src="..."></a> ... <h5><a href="AYNI LINK">BAŞLIK</a>
+ * Özet listede yok — veng_oh_import_story() eksik özeti zaten kaynak sayfadan
+ * (og:description) otomatik tamamlıyor. Ana sayfanın kullandığı alan adı
+ * veng_oh_mezopotamya_url ayarından okunur (bağlantılar göreli "/..." biçiminde).
+ */
+function veng_oh_parse_mezopotamya( $html ) {
+	$items = array();
+	$base_url = get_option( 'veng_oh_mezopotamya_url', '' );
+	$parts = $base_url ? wp_parse_url( $base_url ) : array();
+	if ( empty( $parts['scheme'] ) || empty( $parts['host'] ) ) {
+		return $items;
+	}
+	$host = $parts['scheme'] . '://' . $parts['host'];
+
+	$pattern = '/<a href="(\/[A-Za-z-]+\/content\/view\/\d+)"[^>]*class="[^"]*image-link[^"]*"[^>]*>\s*<img[^>]*src="([^"]+)"[^>]*>.*?<a href="\1">\s*([^<]+?)\s*<\/a>/is';
+	if ( ! preg_match_all( $pattern, $html, $matches, PREG_SET_ORDER ) ) {
+		return $items;
+	}
+	$seen = array();
+	foreach ( $matches as $m ) {
+		$path = $m[1];
+		if ( isset( $seen[ $path ] ) ) {
+			continue;
+		}
+		$seen[ $path ] = true;
+		$title = trim( html_entity_decode( wp_strip_all_tags( $m[3] ), ENT_QUOTES, 'UTF-8' ) );
+		if ( ! $title ) {
+			continue;
+		}
+		$img_path = $m[2];
+		$items[] = array(
+			'title'   => veng_oh_strip( $title ),
+			'link'    => $host . $path,
+			'summary' => '',
+			'image'   => ( 0 === strpos( $img_path, 'http' ) ) ? $img_path : ( $host . $img_path ),
+		);
+	}
+	return $items;
+}
+
+/**
+ * Channel8'in /turkce/sitemap.xml'i DÜZ bir sitemap (Google News formatı değil, sadece
+ * <loc> URL listesi — başlık/özet/görsel yok) ama listelenen /turkce/news/{ID} sayfalarının
+ * her biri kendi og:title/og:description/og:image'ını düzgün veriyor. Bu yüzden
+ * newssitemap'ten farklı olarak başlığı da BURADA (her URL için ayrı istekle) çekiyoruz —
+ * aksi halde adayın başlığı hiç olmazdı. En fazla 6 en yeni haberle sınırlı (sunucuyu
+ * yormamak için, saatte bir çalışıyor).
+ */
+function veng_oh_parse_channel8_sitemap( $xml ) {
+	$items = array();
+	if ( ! preg_match_all( '/<loc>(https:\/\/channel8\.com\/turkce\/news\/\d+)<\/loc>/i', $xml, $m ) ) {
+		return $items;
+	}
+	// Channel8 bot/VengHaberBot User-Agent'ını Cloudflare arkasında reddedebiliyor (bkz.
+	// veng_oh_feeds()'teki ana istek için de aynı sebep) — gerçek tarayıcı gibi görünen UA.
+	$browser_ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+	foreach ( array_slice( $m[1], 0, 6 ) as $url ) {
+		$meta = veng_oh_fetch_og_meta( $url, $browser_ua );
+		if ( empty( $meta['title'] ) ) {
+			continue;
+		}
+		$items[] = array(
+			'title'   => veng_oh_strip( $meta['title'] ),
+			'link'    => $url,
+			'summary' => $meta['summary'],
+			'image'   => $meta['image'],
+		);
+	}
+	return $items;
+}
+
 /** Google News sitemap formatını ayrıştırır (<url><loc>..</loc><news:title>..</news:title></url>). */
 function veng_oh_parse_newssitemap( $xml ) {
 	$items = array();
@@ -263,20 +338,21 @@ function veng_oh_match_meta_content( $html, $property ) {
 	return '';
 }
 
-function veng_oh_fetch_og_meta( $url ) {
+function veng_oh_fetch_og_meta( $url, $user_agent = 'Mozilla/5.0 (compatible; VengHaberBot/1.0; +https://venghaber.com)' ) {
 	$res = wp_remote_get( $url, array(
 		'timeout'    => 12,
-		'user-agent' => 'Mozilla/5.0 (compatible; VengHaberBot/1.0; +https://venghaber.com)',
+		'user-agent' => $user_agent,
 	) );
 	if ( is_wp_error( $res ) || wp_remote_retrieve_response_code( $res ) !== 200 ) {
-		return array( 'summary' => '', 'image' => '' );
+		return array( 'title' => '', 'summary' => '', 'image' => '' );
 	}
 	$html = wp_remote_retrieve_body( $res );
+	$title = veng_oh_strip( veng_oh_match_meta_content( $html, 'og:title' ) );
 	$summary = veng_oh_strip( veng_oh_match_meta_content( $html, 'og:description' ) );
 	// HTML özniteliklerinde & işareti &amp; olarak kaçırılır — decode etmeden kullanınca
 	// sorgu parametreli görsel URL'leri (ör. Rudaw'ın Next.js image proxy'si) bozuluyordu.
 	$image = html_entity_decode( veng_oh_match_meta_content( $html, 'og:image' ), ENT_QUOTES, 'UTF-8' );
-	return array( 'summary' => $summary, 'image' => $image );
+	return array( 'title' => $title, 'summary' => $summary, 'image' => $image );
 }
 
 /** Feed öğesinden kapak görseli URL'i çıkarır: media:thumbnail, media:content, enclosure, sonra gömülü <img>. */
@@ -822,6 +898,10 @@ function veng_oh_run_import() {
 			$parser = 'veng_oh_parse_newssitemap';
 		} elseif ( 'rudaw_embedded' === $type ) {
 			$parser = 'veng_oh_parse_rudaw_embedded';
+		} elseif ( 'mezopotamya_embedded' === $type ) {
+			$parser = 'veng_oh_parse_mezopotamya';
+		} elseif ( 'channel8_sitemap' === $type ) {
+			$parser = 'veng_oh_parse_channel8_sitemap';
 		}
 		$items = array_slice( $parser( wp_remote_retrieve_body( $res ) ), 0, $items_per_feed );
 		$feed_candidates = 0;
@@ -1315,6 +1395,10 @@ function veng_oh_run_emergency_category_fill( $max_imports_per_run = 6 ) {
 			$parser = 'veng_oh_parse_newssitemap';
 		} elseif ( 'rudaw_embedded' === $type ) {
 			$parser = 'veng_oh_parse_rudaw_embedded';
+		} elseif ( 'mezopotamya_embedded' === $type ) {
+			$parser = 'veng_oh_parse_mezopotamya';
+		} elseif ( 'channel8_sitemap' === $type ) {
+			$parser = 'veng_oh_parse_channel8_sitemap';
 		}
 		$items = array_slice( $parser( wp_remote_retrieve_body( $res ) ), 0, 25 );
 		foreach ( $items as $item ) {
