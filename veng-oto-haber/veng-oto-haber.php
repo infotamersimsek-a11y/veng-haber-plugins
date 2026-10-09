@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.27
+ * Version: 1.0.28
  * Author: Veng Haber
  */
 
@@ -90,9 +90,10 @@ function veng_oh_feeds() {
 		array( 'url' => 'http://www.evrensel.net/rss/haber.xml', 'category' => 'gundem', 'source' => 'Evrensel', 'region' => 'other' ),
 		array( 'url' => 'https://www.birgun.net/rss/home', 'category' => 'gundem', 'source' => 'BirGün', 'region' => 'other' ),
 		array( 'url' => 'https://www.mucadelegazetesi.com.tr/sitemap-news.xml', 'category' => 'gundem', 'source' => 'Mücadele Gazetesi', 'type' => 'newssitemap', 'region' => 'other' ),
-		// Genel anasayfa yerine "kurdistan" kategorisi: sadece Kürt bölgesiyle ilgili
-		// haberleri getirir, genel/dünya haberlerini karıştırmaz.
-		array( 'url' => 'https://www.rudaw.net/turkish/kurdistan', 'category' => 'dunya', 'source' => 'Rudaw', 'type' => 'rudaw_embedded', 'region' => 'kurdish' ),
+		// Anasayfa kullanılıyor (kategori sayfasının veri yapısı farklı, ayrıştırıcı orada
+		// çalışmıyor) — veng_oh_parse_rudaw_embedded() zaten sadece "kurdistan" kategorili
+		// öğeleri süzüyor, diğer kategoriler (dünya/Ortadoğu/Türkiye) hiç dönmüyor.
+		array( 'url' => 'https://www.rudaw.net/turkish', 'category' => 'dunya', 'source' => 'Rudaw', 'type' => 'rudaw_embedded', 'region' => 'kurdish' ),
 		array( 'url' => 'https://bianet.org/rss/bianet', 'category' => 'gundem', 'source' => 'Bianet', 'region' => 'kurdish' ),
 		// Channel8: PUK/KRG çevresine bağlı, 2023'te kurulmuş Kürt haber kanalı (Mezopotamya
 		// Ajansı/Medya TV soyundan farklı, bilinen bir yasak/mahkeme kararı yok).
@@ -202,6 +203,14 @@ function veng_oh_parse_rudaw_embedded( $html ) {
 		$img_path = $obj[4];
 		$cat_slug = $obj[5];
 		if ( ! $title ) {
+			continue;
+		}
+		// Anasayfa tüm kategorileri (dünya/Ortadoğu/Türkiye vb.) karışık gösteriyor — site
+		// sahibi Rudaw'dan sadece Kürt bölgesiyle ilgili haberleri istedi. "/turkish/kurdistan"
+		// sayfasının kendi veri yapısı farklı olduğu (bu ayrıştırıcıyla hiç eşleşmediği, 0 haber
+		// döndüğü) için oraya geçmek yerine anasayfada kalıp sadece kategorisi "kurdistan" olan
+		// öğeleri süzüyoruz.
+		if ( 'kurdistan' !== $cat_slug ) {
 			continue;
 		}
 		$items[] = array(
@@ -474,6 +483,42 @@ function veng_oh_classify_category_slug( $title, $summary, $default_slug ) {
 		}
 	}
 	return $default_slug;
+}
+
+/**
+ * Bir adayın günlük bölge kotası (bkz. VENG_OH_WORLD_DAILY_CAP, VENG_OH_KURDISH_DAILY_MIN)
+ * için "kurdish" sayılıp sayılmayacağını İÇERİĞE bakarak belirler — sadece KAYNAĞIN
+ * "Kürt kaynağı" etiketli olması yetmez. Bianet gibi genel bir kaynaktan gelen tamamen
+ * alakasız bir haber (ör. İstanbul'da bina çökmesi) Kürt kotasına sayılmamalı; tersine
+ * BBC gibi "dünya" etiketli bir kaynaktan gelen gerçekten Kürt bölgesiyle ilgili bir haber
+ * Kürt kotasına sayılmalı. Bu yüzden içerik kontrolü kaynak etiketinden önceliklidir.
+ */
+function veng_oh_is_kurdish_related( $title, $summary ) {
+	$text = mb_strtolower( $title . ' ' . $summary, 'UTF-8' );
+	$keywords = array(
+		'kürt', 'kurd', 'kürdistan', 'kurdistan', 'diyarbakır', 'mardin', 'batman',
+		'şanlıurfa', ' urfa', ' van ', 'hakkari', 'şırnak', 'siirt', 'ağrı', 'muş',
+		'bitlis', 'rojava', 'rojhılat', 'peşmerge', 'dem parti', 'hdp', 'pkk', 'ypg',
+		'ypj', 'kobani', 'kobanê', 'erbil', 'hewler', 'hewlêr', 'qamişlo', 'süleymaniye',
+		'duhok', 'behdinan', 'soranice', 'kurmanci', 'öcalan', 'ilham ahmed', 'apê',
+	);
+	foreach ( $keywords as $kw ) {
+		if ( false !== mb_strpos( $text, $kw ) ) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/**
+ * Bir adayın günlük kota için bölgesini belirler: içerik Kürtlerle ilgiliyse kaynak ne
+ * olursa olsun 'kurdish'; değilse ve kaynak 'world' etiketliyse 'world'; aksi halde 'other'.
+ */
+function veng_oh_candidate_region( $item, $feed ) {
+	if ( veng_oh_is_kurdish_related( $item['title'], $item['summary'] ) ) {
+		return 'kurdish';
+	}
+	return 'world' === ( $feed['region'] ?? '' ) ? 'world' : 'other';
 }
 
 /**
@@ -797,12 +842,13 @@ function veng_oh_run_import() {
 		return 0;
 	}
 
-	// Dünya kaynaklarından günlük tavana (VENG_OH_WORLD_DAILY_CAP) ulaşıldıysa o
-	// kaynaklardan gelen adaylar bu turda hiç değerlendirmeye alınmaz — sert sınır,
-	// AI'ın tercihine bırakılmaz.
+	// Dünya kaynaklarından günlük tavana (VENG_OH_WORLD_DAILY_CAP) ulaşıldıysa, içeriği
+	// gerçekten Kürtlerle ilgili OLMAYAN "world" adayları bu turda hiç değerlendirmeye
+	// alınmaz — sert sınır. (İçerik Kürtlerle ilgiliyse kaynak "dünya" olsa da elenmez,
+	// çünkü o zaten Kürt kotasına sayılır.)
 	if ( $daily['world'] >= VENG_OH_WORLD_DAILY_CAP ) {
 		$candidates = array_values( array_filter( $candidates, function ( $c ) {
-			return 'world' !== ( $c['feed']['region'] ?? '' );
+			return 'world' !== veng_oh_candidate_region( $c['item'], $c['feed'] );
 		} ) );
 	}
 
@@ -810,15 +856,15 @@ function veng_oh_run_import() {
 	// topla (bkz. veng_oh_group_and_pick_stories) — aynı konu 3 kaynaktan geldiyse 3 ayrı
 	// haber yerine TEK özgün haber çıkar; sonra hikâyeleri editöryel önceliğe göre sırala
 	// ve en öncelikli $slots taneyi seç.
-	// Kürt kaynaklarından günlük asgari hedefe (VENG_OH_KURDISH_DAILY_MIN) henüz
-	// ulaşılmadıysa ve aday varsa, önce SADECE o kaynaklardan seçilir; kalan boşluk
-	// (varsa) geri kalan adaylardan normal editöryel sıralamayla doldurulur.
+	// Kürtlerle ilgili (içerik bazlı, kaynak fark etmez) adayların günlük asgari hedefe
+	// (VENG_OH_KURDISH_DAILY_MIN) henüz ulaşmadıysa ve böyle aday varsa, önce SADECE
+	// onlardan seçilir; kalan boşluk (varsa) geri kalan adaylardan doldurulur.
 	if ( $daily['kurdish'] < VENG_OH_KURDISH_DAILY_MIN ) {
 		$kurdish_candidates = array_values( array_filter( $candidates, function ( $c ) {
-			return 'kurdish' === ( $c['feed']['region'] ?? '' );
+			return 'kurdish' === veng_oh_candidate_region( $c['item'], $c['feed'] );
 		} ) );
 		$other_candidates = array_values( array_filter( $candidates, function ( $c ) {
-			return 'kurdish' !== ( $c['feed']['region'] ?? '' );
+			return 'kurdish' !== veng_oh_candidate_region( $c['item'], $c['feed'] );
 		} ) );
 		$stories = $kurdish_candidates ? veng_oh_group_and_pick_stories( $kurdish_candidates, $slots ) : array();
 		$remaining_slots = $slots - count( $stories );
@@ -834,7 +880,7 @@ function veng_oh_run_import() {
 		if ( veng_oh_import_story( $story ) ) {
 			$created++;
 			$daily['count']++;
-			$story_region = $story[0]['feed']['region'] ?? 'other';
+			$story_region = veng_oh_candidate_region( $story[0]['item'], $story[0]['feed'] );
 			$daily[ $story_region ] = ( $daily[ $story_region ] ?? 0 ) + 1;
 			$sources = array_unique( array_map( function ( $c ) { return $c['feed']['source']; }, $story ) );
 			$lines[] = 'Seçildi (' . count( $story ) . ' kaynak: ' . implode( ', ', $sources ) . '): ' . mb_substr( $story[0]['item']['title'], 0, 80 );
