@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.26
+ * Version: 1.0.27
  * Author: Veng Haber
  */
 
@@ -12,6 +12,12 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 // Sunucuyu yormamak için günlük en fazla bu kadar haber eklenir.
 define( 'VENG_OH_DAILY_CAP', 30 );
+// Dünya (yabancı) kaynaklardan günlük en fazla bu kadar haber alınır — sert sınır,
+// aşılınca o kaynaklardan gelen adaylar o gün için hiç değerlendirilmez.
+define( 'VENG_OH_WORLD_DAILY_CAP', 4 );
+// Kürt bölgesi kaynaklarından günlük en az bu kadar haber hedeflenir — aday varsa
+// önce bu kaynaklardan seçilir, kalan boşluk normal sıralamayla doldurulur.
+define( 'VENG_OH_KURDISH_DAILY_MIN', 15 );
 // Haberler sadece bu saat aralığında (site saatine göre) çekilir.
 define( 'VENG_OH_ACTIVE_HOUR_START', 6 );
 define( 'VENG_OH_ACTIVE_HOUR_END', 22 );
@@ -67,29 +73,44 @@ if ( file_exists( __DIR__ . '/puc/plugin-update-checker.php' ) ) {
  * Sputnik Türkiye: kaldırıldı — görsellerinin üzerinde kendi logo/yazı
  * tasarımı gömülü, Veng Haber kart/slider tasarımına uymuyor.
  */
+/**
+ * Her kaynağın 'region' etiketi (kurdish/world/other) günlük kota mantığında kullanılır
+ * (bkz. VENG_OH_WORLD_DAILY_CAP, VENG_OH_KURDISH_DAILY_MIN) — 'category' alanıyla
+ * KARIŞTIRILMASIN, o sadece WP kategorisi için varsayılan değer.
+ */
 function veng_oh_feeds() {
+	// Bazı siteler "bot" geçen User-Agent'ları engelliyor (ör. Channel8, Cloudflare arkasında) —
+	// normal tarayıcı gibi görünen bu UA ile denenir.
+	$browser_ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
 	$feeds = array(
-		array( 'url' => 'https://feeds.bbci.co.uk/turkce/rss.xml', 'category' => 'dunya', 'source' => 'BBC Türkçe' ),
-		array( 'url' => 'http://rss.dw.com/rdf/rss-tur-all', 'category' => 'dunya', 'source' => 'DW Türkçe' ),
-		array( 'url' => 'https://feeds.feedburner.com/euronews/tr/home', 'category' => 'dunya', 'source' => 'Euronews Türkçe' ),
-		array( 'url' => 'http://www.evrensel.net/rss/haber.xml', 'category' => 'gundem', 'source' => 'Evrensel' ),
-		array( 'url' => 'https://www.birgun.net/rss/home', 'category' => 'gundem', 'source' => 'BirGün' ),
-		array( 'url' => 'https://www.mucadelegazetesi.com.tr/sitemap-news.xml', 'category' => 'gundem', 'source' => 'Mücadele Gazetesi', 'type' => 'newssitemap' ),
-		array( 'url' => 'https://www.rudaw.net/turkish', 'category' => 'dunya', 'source' => 'Rudaw', 'type' => 'rudaw_embedded' ),
-		array( 'url' => 'https://bianet.org/rss/bianet', 'category' => 'gundem', 'source' => 'Bianet' ),
+		array( 'url' => 'https://feeds.bbci.co.uk/turkce/rss.xml', 'category' => 'dunya', 'source' => 'BBC Türkçe', 'region' => 'world' ),
+		array( 'url' => 'http://rss.dw.com/rdf/rss-tur-all', 'category' => 'dunya', 'source' => 'DW Türkçe', 'region' => 'world' ),
+		array( 'url' => 'https://feeds.feedburner.com/euronews/tr/home', 'category' => 'dunya', 'source' => 'Euronews Türkçe', 'region' => 'world' ),
+		array( 'url' => 'http://www.evrensel.net/rss/haber.xml', 'category' => 'gundem', 'source' => 'Evrensel', 'region' => 'other' ),
+		array( 'url' => 'https://www.birgun.net/rss/home', 'category' => 'gundem', 'source' => 'BirGün', 'region' => 'other' ),
+		array( 'url' => 'https://www.mucadelegazetesi.com.tr/sitemap-news.xml', 'category' => 'gundem', 'source' => 'Mücadele Gazetesi', 'type' => 'newssitemap', 'region' => 'other' ),
+		// Genel anasayfa yerine "kurdistan" kategorisi: sadece Kürt bölgesiyle ilgili
+		// haberleri getirir, genel/dünya haberlerini karıştırmaz.
+		array( 'url' => 'https://www.rudaw.net/turkish/kurdistan', 'category' => 'dunya', 'source' => 'Rudaw', 'type' => 'rudaw_embedded', 'region' => 'kurdish' ),
+		array( 'url' => 'https://bianet.org/rss/bianet', 'category' => 'gundem', 'source' => 'Bianet', 'region' => 'kurdish' ),
 		// Channel8: PUK/KRG çevresine bağlı, 2023'te kurulmuş Kürt haber kanalı (Mezopotamya
-		// Ajansı/Medya TV soyundan farklı, bilinen bir yasak/mahkeme kararı yok). RSS adresi
-		// doğrulanamadı (otomatik denemede Cloudflare 403 verdi) — çalışmazsa logda "alınamadı"
-		// görünür, gerekirse adres güncellenir.
-		array( 'url' => 'https://channel8.com/turkce/feed/', 'category' => 'gundem', 'source' => 'Channel8' ),
+		// Ajansı/Medya TV soyundan farklı, bilinen bir yasak/mahkeme kararı yok).
+		array( 'url' => 'https://channel8.com/turkce/feed/', 'category' => 'gundem', 'source' => 'Channel8', 'region' => 'kurdish', 'user_agent' => $browser_ua ),
 	);
 
 	// Mezopotamya Ajansı: alan adı mahkeme kararıyla sık sık engelleniyor, otomatik bir
 	// sonraki numaraya geçme mekanizması bilinçli kurulmadı. Bunun yerine adres Oto Haber
 	// ayarlarından (veng_oh_mezopotamya_url) elle girilir/güncellenir; boşsa kaynak atlanır.
-	$mezopotamya_url = get_option( 'veng_oh_mezopotamya_url', '' );
+	// Kullanıcı genelde ana sayfa adresini yapıştırıyor (RSS yolunu değil) — '/feed/' zaten
+	// yoksa otomatik eklenir.
+	$mezopotamya_url = trim( get_option( 'veng_oh_mezopotamya_url', '' ) );
 	if ( $mezopotamya_url ) {
-		$feeds[] = array( 'url' => $mezopotamya_url, 'category' => 'gundem', 'source' => 'Mezopotamya Ajansı', 'sslverify' => false );
+		$normalized = rtrim( $mezopotamya_url, '/' );
+		if ( false === stripos( $normalized, '/feed' ) && ! preg_match( '/\.(xml|rss)$/i', $normalized ) ) {
+			$normalized .= '/feed/';
+		}
+		$feeds[] = array( 'url' => $normalized, 'category' => 'gundem', 'source' => 'Mezopotamya Ajansı', 'sslverify' => false, 'region' => 'kurdish' );
 	}
 
 	return $feeds;
@@ -696,15 +717,21 @@ function veng_oh_log( $msg ) {
 }
 
 /**
- * Günlük içe aktarım sayacı: sunucuyu yormamak için bir günde en fazla
- * VENG_OH_DAILY_CAP haber eklenir. Tarih değişince otomatik sıfırlanır.
+ * Günlük içe aktarım sayacı: sunucuyu yormamak için bir günde en fazla VENG_OH_DAILY_CAP
+ * haber eklenir. Ayrıca bölge bazlı (kurdish/world/other) sayaçlar da tutulur — dünya
+ * kaynakları için sert tavan, Kürt kaynakları için asgari hedef uygulanabilsin diye
+ * (bkz. veng_oh_run_import). Tarih değişince otomatik sıfırlanır.
  */
 function veng_oh_get_daily_count() {
 	$data = get_option( 'veng_oh_daily_count' );
 	$today = current_time( 'Y-m-d' );
 	if ( ! is_array( $data ) || ( $data['date'] ?? '' ) !== $today ) {
-		return array( 'date' => $today, 'count' => 0 );
+		return array( 'date' => $today, 'count' => 0, 'kurdish' => 0, 'world' => 0, 'other' => 0 );
 	}
+	// Bugünden önce eklenen kayıtlarda bölge alanları olmayabilir.
+	$data['kurdish'] = $data['kurdish'] ?? 0;
+	$data['world']   = $data['world'] ?? 0;
+	$data['other']   = $data['other'] ?? 0;
 	return $data;
 }
 
@@ -737,7 +764,7 @@ function veng_oh_run_import() {
 	foreach ( veng_oh_feeds() as $feed ) {
 		$res = wp_remote_get( $feed['url'], array(
 			'timeout'    => 15,
-			'user-agent' => 'Mozilla/5.0 (compatible; VengHaberBot/1.0; +https://venghaber.com)',
+			'user-agent' => $feed['user_agent'] ?? 'Mozilla/5.0 (compatible; VengHaberBot/1.0; +https://venghaber.com)',
 			'sslverify'  => $feed['sslverify'] ?? true,
 		) );
 		if ( is_wp_error( $res ) || wp_remote_retrieve_response_code( $res ) !== 200 ) {
@@ -770,17 +797,45 @@ function veng_oh_run_import() {
 		return 0;
 	}
 
+	// Dünya kaynaklarından günlük tavana (VENG_OH_WORLD_DAILY_CAP) ulaşıldıysa o
+	// kaynaklardan gelen adaylar bu turda hiç değerlendirmeye alınmaz — sert sınır,
+	// AI'ın tercihine bırakılmaz.
+	if ( $daily['world'] >= VENG_OH_WORLD_DAILY_CAP ) {
+		$candidates = array_values( array_filter( $candidates, function ( $c ) {
+			return 'world' !== ( $c['feed']['region'] ?? '' );
+		} ) );
+	}
+
 	// 2. Aşama: farklı kaynaklardan gelen ama aynı olayı anlatan adayları tek "hikâye"de
 	// topla (bkz. veng_oh_group_and_pick_stories) — aynı konu 3 kaynaktan geldiyse 3 ayrı
 	// haber yerine TEK özgün haber çıkar; sonra hikâyeleri editöryel önceliğe göre sırala
 	// ve en öncelikli $slots taneyi seç.
-	$stories = veng_oh_group_and_pick_stories( $candidates, $slots );
+	// Kürt kaynaklarından günlük asgari hedefe (VENG_OH_KURDISH_DAILY_MIN) henüz
+	// ulaşılmadıysa ve aday varsa, önce SADECE o kaynaklardan seçilir; kalan boşluk
+	// (varsa) geri kalan adaylardan normal editöryel sıralamayla doldurulur.
+	if ( $daily['kurdish'] < VENG_OH_KURDISH_DAILY_MIN ) {
+		$kurdish_candidates = array_values( array_filter( $candidates, function ( $c ) {
+			return 'kurdish' === ( $c['feed']['region'] ?? '' );
+		} ) );
+		$other_candidates = array_values( array_filter( $candidates, function ( $c ) {
+			return 'kurdish' !== ( $c['feed']['region'] ?? '' );
+		} ) );
+		$stories = $kurdish_candidates ? veng_oh_group_and_pick_stories( $kurdish_candidates, $slots ) : array();
+		$remaining_slots = $slots - count( $stories );
+		if ( $remaining_slots > 0 && $other_candidates ) {
+			$stories = array_merge( $stories, veng_oh_group_and_pick_stories( $other_candidates, $remaining_slots ) );
+		}
+	} else {
+		$stories = veng_oh_group_and_pick_stories( $candidates, $slots );
+	}
 
 	$created = 0;
 	foreach ( $stories as $story ) {
 		if ( veng_oh_import_story( $story ) ) {
 			$created++;
 			$daily['count']++;
+			$story_region = $story[0]['feed']['region'] ?? 'other';
+			$daily[ $story_region ] = ( $daily[ $story_region ] ?? 0 ) + 1;
 			$sources = array_unique( array_map( function ( $c ) { return $c['feed']['source']; }, $story ) );
 			$lines[] = 'Seçildi (' . count( $story ) . ' kaynak: ' . implode( ', ', $sources ) . '): ' . mb_substr( $story[0]['item']['title'], 0, 80 );
 		}
@@ -1202,7 +1257,7 @@ function veng_oh_run_emergency_category_fill( $max_imports_per_run = 6 ) {
 		}
 		$res = wp_remote_get( $feed['url'], array(
 			'timeout'    => 15,
-			'user-agent' => 'Mozilla/5.0 (compatible; VengHaberBot/1.0; +https://venghaber.com)',
+			'user-agent' => $feed['user_agent'] ?? 'Mozilla/5.0 (compatible; VengHaberBot/1.0; +https://venghaber.com)',
 			'sslverify'  => $feed['sslverify'] ?? true,
 		) );
 		if ( is_wp_error( $res ) || wp_remote_retrieve_response_code( $res ) !== 200 ) {
@@ -1542,6 +1597,7 @@ function veng_oh_settings_page() {
 		<h2>Durum</h2>
 		<p><strong>Toplam otomatik haber:</strong> <?php echo esc_html( number_format_i18n( $auto_post_count ) ); ?> (sınır yok — fazlaysa "Tüm Otomatik Haberleri Şimdi Sil" ile elle temizleyebilirsin)</p>
 		<p><strong>Bugün eklenen:</strong> <?php echo esc_html( number_format_i18n( $daily_count['count'] ) ); ?> / <?php echo esc_html( number_format_i18n( VENG_OH_DAILY_CAP ) ); ?> (sunucuyu yormamak için günlük sınır, gece yarısı sıfırlanır)</p>
+		<p><strong>Bugün bölge dağılımı:</strong> Kürt bölgesi <?php echo esc_html( number_format_i18n( $daily_count['kurdish'] ) ); ?> (hedef: en az <?php echo esc_html( number_format_i18n( VENG_OH_KURDISH_DAILY_MIN ) ); ?>) · Dünya <?php echo esc_html( number_format_i18n( $daily_count['world'] ) ); ?> / <?php echo esc_html( number_format_i18n( VENG_OH_WORLD_DAILY_CAP ) ); ?> (tavan) · Diğer <?php echo esc_html( number_format_i18n( $daily_count['other'] ) ); ?></p>
 		<p><strong>Çalışma sıklığı:</strong> saat başı, her çalışmada en fazla <?php echo esc_html( VENG_OH_RUN_CAP ); ?> haber, sadece <?php echo esc_html( VENG_OH_ACTIVE_HOUR_START ); ?>:00–<?php echo esc_html( VENG_OH_ACTIVE_HOUR_END ); ?>:00 arası (adaylar arasından en önemlileri AI ile seçilir)</p>
 		<?php if ( $last ) : ?>
 			<p><strong>Son tarama:</strong> <?php echo esc_html( $last['time'] ); ?> — <?php echo intval( $last['created'] ); ?> yeni haber eklendi.</p>
