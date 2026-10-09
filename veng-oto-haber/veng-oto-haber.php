@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.30
+ * Version: 1.0.31
  * Author: Veng Haber
  */
 
@@ -847,12 +847,13 @@ function veng_oh_get_daily_count() {
 	$data = get_option( 'veng_oh_daily_count' );
 	$today = current_time( 'Y-m-d' );
 	if ( ! is_array( $data ) || ( $data['date'] ?? '' ) !== $today ) {
-		return array( 'date' => $today, 'count' => 0, 'kurdish' => 0, 'world' => 0, 'other' => 0 );
+		return array( 'date' => $today, 'count' => 0, 'kurdish' => 0, 'world' => 0, 'other' => 0, 'sources' => array() );
 	}
-	// Bugünden önce eklenen kayıtlarda bölge alanları olmayabilir.
+	// Bugünden önce eklenen kayıtlarda bölge/kaynak alanları olmayabilir.
 	$data['kurdish'] = $data['kurdish'] ?? 0;
 	$data['world']   = $data['world'] ?? 0;
 	$data['other']   = $data['other'] ?? 0;
+	$data['sources'] = $data['sources'] ?? array();
 	return $data;
 }
 
@@ -963,6 +964,9 @@ function veng_oh_run_import() {
 			$story_region = veng_oh_candidate_region( $story[0]['item'], $story[0]['feed'] );
 			$daily[ $story_region ] = ( $daily[ $story_region ] ?? 0 ) + 1;
 			$sources = array_unique( array_map( function ( $c ) { return $c['feed']['source']; }, $story ) );
+			foreach ( $sources as $src ) {
+				$daily['sources'][ $src ] = ( $daily['sources'][ $src ] ?? 0 ) + 1;
+			}
 			$lines[] = 'Seçildi (' . count( $story ) . ' kaynak: ' . implode( ', ', $sources ) . '): ' . mb_substr( $story[0]['item']['title'], 0, 80 );
 		}
 	}
@@ -1734,6 +1738,23 @@ function veng_oh_settings_page() {
 		<p><strong>Toplam otomatik haber:</strong> <?php echo esc_html( number_format_i18n( $auto_post_count ) ); ?> (sınır yok — fazlaysa "Tüm Otomatik Haberleri Şimdi Sil" ile elle temizleyebilirsin)</p>
 		<p><strong>Bugün eklenen:</strong> <?php echo esc_html( number_format_i18n( $daily_count['count'] ) ); ?> / <?php echo esc_html( number_format_i18n( VENG_OH_DAILY_CAP ) ); ?> (sunucuyu yormamak için günlük sınır, gece yarısı sıfırlanır)</p>
 		<p><strong>Bugün bölge dağılımı:</strong> Kürt bölgesi <?php echo esc_html( number_format_i18n( $daily_count['kurdish'] ) ); ?> (hedef: en az <?php echo esc_html( number_format_i18n( VENG_OH_KURDISH_DAILY_MIN ) ); ?>) · Dünya <?php echo esc_html( number_format_i18n( $daily_count['world'] ) ); ?> / <?php echo esc_html( number_format_i18n( VENG_OH_WORLD_DAILY_CAP ) ); ?> (tavan) · Diğer <?php echo esc_html( number_format_i18n( $daily_count['other'] ) ); ?></p>
+		<p><strong>Bugün kaynak bazlı yayınlanan:</strong>
+			<?php
+			$source_counts = $daily_count['sources'] ?? array();
+			$known_sources = array_unique( array_map( function ( $f ) { return $f['source']; }, veng_oh_feeds() ) );
+			foreach ( $known_sources as $src ) {
+				if ( ! isset( $source_counts[ $src ] ) ) {
+					$source_counts[ $src ] = 0;
+				}
+			}
+			arsort( $source_counts );
+			$parts = array();
+			foreach ( $source_counts as $src => $cnt ) {
+				$parts[] = esc_html( $src ) . ' ' . esc_html( number_format_i18n( $cnt ) );
+			}
+			echo implode( ' · ', $parts );
+			?>
+		</p>
 		<p><strong>Çalışma sıklığı:</strong> saat başı, her çalışmada en fazla <?php echo esc_html( VENG_OH_RUN_CAP ); ?> haber, sadece <?php echo esc_html( VENG_OH_ACTIVE_HOUR_START ); ?>:00–<?php echo esc_html( VENG_OH_ACTIVE_HOUR_END ); ?>:00 arası (adaylar arasından en önemlileri AI ile seçilir)</p>
 		<?php if ( $last ) : ?>
 			<p><strong>Son tarama:</strong> <?php echo esc_html( $last['time'] ); ?> — <?php echo intval( $last['created'] ); ?> yeni haber eklendi.</p>
