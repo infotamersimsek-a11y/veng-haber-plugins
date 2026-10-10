@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.31
+ * Version: 1.0.32
  * Author: Veng Haber
  */
 
@@ -18,6 +18,16 @@ define( 'VENG_OH_WORLD_DAILY_CAP', 4 );
 // Kürt bölgesi kaynaklarından günlük en az bu kadar haber hedeflenir — aday varsa
 // önce bu kaynaklardan seçilir, kalan boşluk normal sıralamayla doldurulur.
 define( 'VENG_OH_KURDISH_DAILY_MIN', 15 );
+// Bölge hedefi (yukarıdaki) genel toplamı garanti eder ama TEK TEK kaynakları değil —
+// Kürt bölgesi hedefine başka kaynaklardan (ör. Rudaw, Mücadele Gazetesi) ulaşılınca
+// sistem "zorla seç" modundan çıkıyor, bu da bazı kaynakların (ör. Mezopotamya Ajansı)
+// günlerce hiç seçilmemesine yol açabiliyordu — adayı olsa bile diğer kaynaklarla rekabette
+// kaybediyordu. Bu yüzden belirli kaynaklara AYRI, kendi günlük asgari sayıları da var;
+// bu sayıya henüz ulaşmamış bir kaynağın adayı varsa, diğer her şeyden önce o seçilir.
+define( 'VENG_OH_SOURCE_DAILY_MINS', array(
+	'Mezopotamya Ajansı' => 4,
+	'Channel8'            => 4,
+) );
 // Haberler sadece bu saat aralığında (site saatine göre) çekilir.
 define( 'VENG_OH_ACTIVE_HOUR_START', 6 );
 define( 'VENG_OH_ACTIVE_HOUR_END', 22 );
@@ -933,27 +943,59 @@ function veng_oh_run_import() {
 		} ) );
 	}
 
-	// 2. Aşama: farklı kaynaklardan gelen ama aynı olayı anlatan adayları tek "hikâye"de
-	// topla (bkz. veng_oh_group_and_pick_stories) — aynı konu 3 kaynaktan geldiyse 3 ayrı
-	// haber yerine TEK özgün haber çıkar; sonra hikâyeleri editöryel önceliğe göre sırala
-	// ve en öncelikli $slots taneyi seç.
+	// 2. Aşama (öncelik 1): VENG_OH_SOURCE_DAILY_MINS'te adı geçen kaynaklardan henüz
+	// günlük asgariye ulaşmamış olanlar varsa, adayı olduğu sürece HER ŞEYDEN ÖNCE o
+	// kaynaktan bir haber seçilir. Bölge bazlı (Kürt/dünya) hedef zaten tutturulmuş olsa
+	// bile, belirli bir kaynak (ör. Mezopotamya Ajansı) diğer kaynaklarla rekabette
+	// sürekli kaybedip hiç seçilmeyebiliyordu — bu, o riski ortadan kaldırır.
+	$stories = array();
+	foreach ( VENG_OH_SOURCE_DAILY_MINS as $src_name => $src_min ) {
+		if ( count( $stories ) >= $slots ) {
+			break;
+		}
+		if ( ( $daily['sources'][ $src_name ] ?? 0 ) >= $src_min ) {
+			continue;
+		}
+		$src_candidates = array_values( array_filter( $candidates, function ( $c ) use ( $src_name ) {
+			return $c['feed']['source'] === $src_name;
+		} ) );
+		if ( empty( $src_candidates ) ) {
+			continue;
+		}
+		$picked = veng_oh_group_and_pick_stories( $src_candidates, 1 );
+		if ( empty( $picked ) ) {
+			continue;
+		}
+		$stories[] = $picked[0];
+		$used_links = array_map( function ( $c ) { return $c['item']['link']; }, $picked[0] );
+		$candidates = array_values( array_filter( $candidates, function ( $c ) use ( $used_links ) {
+			return ! in_array( $c['item']['link'], $used_links, true );
+		} ) );
+	}
+
+	// 3. Aşama (öncelik 2): kalan boşluk, farklı kaynaklardan gelen ama aynı olayı anlatan
+	// adayları tek "hikâye"de toplayarak (bkz. veng_oh_group_and_pick_stories) doldurulur.
 	// Kürtlerle ilgili (içerik bazlı, kaynak fark etmez) adayların günlük asgari hedefe
 	// (VENG_OH_KURDISH_DAILY_MIN) henüz ulaşmadıysa ve böyle aday varsa, önce SADECE
-	// onlardan seçilir; kalan boşluk (varsa) geri kalan adaylardan doldurulur.
-	if ( $daily['kurdish'] < VENG_OH_KURDISH_DAILY_MIN ) {
-		$kurdish_candidates = array_values( array_filter( $candidates, function ( $c ) {
-			return 'kurdish' === veng_oh_candidate_region( $c['item'], $c['feed'] );
-		} ) );
-		$other_candidates = array_values( array_filter( $candidates, function ( $c ) {
-			return 'kurdish' !== veng_oh_candidate_region( $c['item'], $c['feed'] );
-		} ) );
-		$stories = $kurdish_candidates ? veng_oh_group_and_pick_stories( $kurdish_candidates, $slots ) : array();
-		$remaining_slots = $slots - count( $stories );
-		if ( $remaining_slots > 0 && $other_candidates ) {
-			$stories = array_merge( $stories, veng_oh_group_and_pick_stories( $other_candidates, $remaining_slots ) );
+	// onlardan seçilir; kalan boşluk geri kalan adaylardan doldurulur.
+	$remaining_slots = $slots - count( $stories );
+	if ( $remaining_slots > 0 ) {
+		if ( $daily['kurdish'] < VENG_OH_KURDISH_DAILY_MIN ) {
+			$kurdish_candidates = array_values( array_filter( $candidates, function ( $c ) {
+				return 'kurdish' === veng_oh_candidate_region( $c['item'], $c['feed'] );
+			} ) );
+			$other_candidates = array_values( array_filter( $candidates, function ( $c ) {
+				return 'kurdish' !== veng_oh_candidate_region( $c['item'], $c['feed'] );
+			} ) );
+			$fill = $kurdish_candidates ? veng_oh_group_and_pick_stories( $kurdish_candidates, $remaining_slots ) : array();
+			$fill_remaining = $remaining_slots - count( $fill );
+			if ( $fill_remaining > 0 && $other_candidates ) {
+				$fill = array_merge( $fill, veng_oh_group_and_pick_stories( $other_candidates, $fill_remaining ) );
+			}
+		} else {
+			$fill = veng_oh_group_and_pick_stories( $candidates, $remaining_slots );
 		}
-	} else {
-		$stories = veng_oh_group_and_pick_stories( $candidates, $slots );
+		$stories = array_merge( $stories, $fill );
 	}
 
 	$created = 0;
