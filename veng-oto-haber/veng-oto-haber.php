@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.32
+ * Version: 1.0.33
  * Author: Veng Haber
  */
 
@@ -105,6 +105,10 @@ function veng_oh_feeds() {
 		// öğeleri süzüyor, diğer kategoriler (dünya/Ortadoğu/Türkiye) hiç dönmüyor.
 		array( 'url' => 'https://www.rudaw.net/turkish', 'category' => 'dunya', 'source' => 'Rudaw', 'type' => 'rudaw_embedded', 'region' => 'kurdish' ),
 		array( 'url' => 'https://bianet.org/rss/bianet', 'category' => 'gundem', 'source' => 'Bianet', 'region' => 'kurdish' ),
+		// Amed Times: Diyarbakır bölgesi haber sitesi, genel haber akışı Amedspor ve bölge
+		// kulüpleri haberlerini de içeriyor (Amedspor'a özel kategori feed'i boştu, bu yüzden
+		// genel akış kullanılıyor — veng_oh_classify_category_slug zaten spor olanları ayırır).
+		array( 'url' => 'https://www.amedtimes.com.tr/rss/news', 'category' => 'gundem', 'source' => 'Amed Times', 'region' => 'kurdish' ),
 		// Channel8: PUK/KRG çevresine bağlı, 2023'te kurulmuş Kürt haber kanalı (Mezopotamya
 		// Ajansı/Medya TV soyundan farklı, bilinen bir yasak/mahkeme kararı yok).
 		// Channel8'in RSS'i yok ama düz bir sitemap.xml'i var (<loc> URL listesi, başlık/özet
@@ -420,6 +424,7 @@ function veng_oh_editorial_rewrite( $item, $source ) {
 		. "- Hiçbir taraf/kişi/kurum/örgüt lehine veya aleyhine yorum, övgü ya da suçlama içermesin; yalnızca bilinen olguları aktar.\n"
 		. "- İddia/açıklama niteliğindeki ifadeleri \"iddia edildi\", \"açıklandı\", \"belirtildi\" gibi temkinli atıf kalıplarıyla ver, kesin doğru gibi sunma.\n"
 		. "- Uydurma detay, sayı, isim veya alıntı ekleme; yalnızca verilen bilgiyle sınırlı kal, belirsizse genel ifade kullan.\n"
+		. "- Orijinal metinde geçen sayıları (skor, tarih, miktar, yaş, istatistik vb.) OLDUĞU GİBİ koru — yeniden yazarken yuvarlamaya, değiştirmeye veya yanlış hatırlamaya çalışma, aynen aktar.\n"
 		. "- Magazinsel/abartılı ifadelerden kaçın, gazetecilik standardına uygun ol.\n\n"
 		. 'Orijinal başlık: "' . $item['title'] . "\"\n"
 		. 'Orijinal özet: "' . mb_substr( $item['summary'], 0, 600 ) . "\"\n\n"
@@ -495,6 +500,7 @@ function veng_oh_editorial_merge_rewrite( $story ) {
 		. "- Hiçbir taraf/kişi/kurum/örgüt lehine veya aleyhine yorum, övgü ya da suçlama içermesin; yalnızca bilinen olguları aktar.\n"
 		. "- İddia/açıklama niteliğindeki ifadeleri \"iddia edildi\", \"açıklandı\", \"belirtildi\" gibi temkinli atıf kalıplarıyla ver, kesin doğru gibi sunma.\n"
 		. "- Kaynaklarda GEÇMEYEN hiçbir detay, sayı, isim veya alıntı uydurma; sadece verilen bilgiyle sınırlı kal.\n"
+		. "- Kaynaklarda geçen sayıları (skor, tarih, miktar, yaş, istatistik vb.) OLDUĞU GİBİ koru, değiştirme; kaynaklar arasında sayı çelişkisi varsa en güncel/çok tekrarlanan kaynağı esas al.\n"
 		. "- Magazinsel/abartılı ifadelerden kaçın, gazetecilik standardına uygun ol.\n\n"
 		. $sources_text . "\n"
 		. "Şunu JSON olarak döndür (başka hiçbir şey yazma):\n"
@@ -554,7 +560,7 @@ function veng_oh_classify_category_slug( $title, $summary, $default_slug ) {
 	$text = mb_strtolower( $title . ' ' . $summary, 'UTF-8' );
 	$rules = array(
 		'ekonomi'      => array( 'dolar', 'euro', 'borsa', 'enflasyon', 'faiz', 'ekonomi', 'zam', ' tl ', 'lira', 'merkez bankası', 'ihracat', 'ithalat', 'piyasa', 'asgari ücret' ),
-		'spor'         => array( 'futbol', ' maç', 'süper lig', 'galatasaray', 'fenerbahçe', 'beşiktaş', 'transfer', 'şampiyon', 'basketbol', 'voleybol', 'milli takım', 'teknik direktör' ),
+		'spor'         => array( 'futbol', ' maç', 'süper lig', 'galatasaray', 'fenerbahçe', 'beşiktaş', 'transfer', 'şampiyon', 'basketbol', 'voleybol', 'milli takım', 'teknik direktör', 'amedspor', 'diyarbakırspor' ),
 		'teknoloji'    => array( 'yapay zeka', 'teknoloji', 'akıllı telefon', 'uygulama', 'yazılım', 'siber', 'apple', 'google', 'microsoft', 'bilgisayar', 'internet sitesi' ),
 		'saglik'       => array( 'sağlık bakanlığı', 'hastane', 'doktor', 'aşı', 'virüs', 'salgın', 'ilaç', 'tedavi', 'covid', 'ameliyat' ),
 		'siyaset'      => array( 'meclis', 'seçim', 'cumhurbaşkanı', 'bakanı', 'parti', 'ak parti', 'chp', 'mhp', 'dem parti', 'hükümet', 'vekil', 'anayasa' ),
@@ -587,6 +593,7 @@ function veng_oh_is_kurdish_related( $title, $summary ) {
 		'bitlis', 'rojava', 'rojhılat', 'peşmerge', 'dem parti', 'hdp', 'pkk', 'ypg',
 		'ypj', 'kobani', 'kobanê', 'erbil', 'hewler', 'hewlêr', 'qamişlo', 'süleymaniye',
 		'duhok', 'behdinan', 'soranice', 'kurmanci', 'öcalan', 'ilham ahmed', 'apê',
+		'amedspor', 'diyarbakırspor',
 	);
 	foreach ( $keywords as $kw ) {
 		if ( false !== mb_strpos( $text, $kw ) ) {
@@ -1058,10 +1065,10 @@ function veng_oh_group_and_pick_stories( $candidates, $limit ) {
 	$prompt = "Aşağıda bu saat içinde yayına aday " . count( $candidates ) . " haber başlığı var. Farklı kaynaklardan gelen ama AYNI olayı/konuyu anlatan başlıkları aynı grupta topla (ör. 3 farklı kaynak aynı saldırıyı/açıklamayı farklı başlıklarla veriyorsa bunlar bir grup). Konusu farklı olanları tek başına kendi grubunda bırak.\n\n"
 		. "Sonra grupları editöryel önceliğe göre sırala ve en öncelikli {$limit} grubu seç.\n"
 		. "Öncelik ver (yüksekten düşüğe):\n"
-		. "1) Kürt coğrafyasını (Diyarbakır, Mardin, Batman, Urfa/Şanlıurfa, Van, Hakkari, Şırnak, Siirt, Ağrı, Muş, Bitlis gibi doğu/güneydoğu illeri) ve Kürtlerle ilgili HER konudaki haberler (siyaset, kültür-sanat, toplum, ekonomi fark etmez) — bu sitenin ana odağı, bunlara geniş yer ver.\n"
+		. "1) Kürt coğrafyasını (Diyarbakır, Mardin, Batman, Urfa/Şanlıurfa, Van, Hakkari, Şırnak, Siirt, Ağrı, Muş, Bitlis gibi doğu/güneydoğu illeri) ve Kürtlerle ilgili HER konudaki haberler (siyaset, kültür-sanat, toplum, ekonomi, SPOR dahil — özellikle Amedspor ve bölge kulüpleri maç/transfer haberleri de buraya girer, rutin spor sayılmaz) — bu sitenin ana odağı, bunlara geniş yer ver.\n"
 		. "2) Dünya gündemini doğrudan ilgilendiren önemli gelişmeler (uluslararası siyaset, savaş/çatışma, büyük afet, dünya kültür-sanatı).\n"
 		. "3) Bölge fark etmeksizin ÇOK önemli gelişmeler: can kaybı/yaralanma, patlama/saldırı/afet, geniş kitleyi etkileyen kritik resmi karar/açıklama (yargı, ekonomi, seçim, güvenlik).\n"
-		. "Düşük öncelik ver: Türkiye geneliyle ilgili ama yukarıdaki 3. maddeye girmeyen sıradan/rutin iç haberler (ana akım medyada her gün çıkan türden, bölgeyle/Kürtlerle doğrudan ilgisi olmayan) — bu site ana akım Türkiye medyası gibi davranmasın, Türkiye haberlerine sadece gerçekten önemliyse yer versin. Rutin spor sonucu, magazin, tekrar eden/az bilgi içeren haberler de düşük öncelikli.\n\n"
+		. "Düşük öncelik ver: Türkiye geneliyle ilgili ama yukarıdaki 3. maddeye girmeyen sıradan/rutin iç haberler (ana akım medyada her gün çıkan türden, bölgeyle/Kürtlerle doğrudan ilgisi olmayan) — bu site ana akım Türkiye medyası gibi davranmasın, Türkiye haberlerine sadece gerçekten önemliyse yer versin. Galatasaray/Fenerbahçe/Beşiktaş gibi büyük şehir kulüplerinin rutin spor sonucu, magazin, tekrar eden/az bilgi içeren haberler de düşük öncelikli (Amedspor/bölge kulüpleri bunun dışında, madde 1'de).\n\n"
 		. "Kaynak dağılımı: elinde yeterli aday varsa, seçtiğin {$limit} grubun yaklaşık %70'i şu kaynaklardan olsun: Mezopotamya Ajansı, Bianet, Rudaw, Channel8 (Kürt bölgesi/siyaseti odaklı kaynaklar). Bu oranı tutturacak kadar aday yoksa (ör. o kaynaklardan o saat az haber gelmişse) zorlama, mevcut en iyi adaylardan seç — asıl öncelik yukarıdaki 1-2-3 sıralaması.\n\n"
 		. $list . "\n"
 		. "Sadece seçtiğin {$limit} grubu, her grubun aday numaralarını içeren bir dizi dizisi olarak JSON döndür, başka hiçbir şey yazma: {\"groups\": [[3, 7], [1], [5, 2, 9]]}";
