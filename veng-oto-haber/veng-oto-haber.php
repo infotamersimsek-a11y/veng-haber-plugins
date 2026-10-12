@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.34
+ * Version: 1.0.35
  * Author: Veng Haber
  */
 
@@ -28,6 +28,9 @@ define( 'VENG_OH_SOURCE_DAILY_MINS', array(
 	'Mezopotamya Ajansı' => 4,
 	'Channel8'            => 4,
 ) );
+// Amedspor/bölge kulüpleri spor haberleri günlük 30 sınırının DIŞINDA sayılır (ayrı,
+// ek bir hak) — ama bu da sınırsız değil, haber yoğunluğuna göre günlük en fazla bu kadar.
+define( 'VENG_OH_REGIONAL_SPORTS_DAILY_CAP', 10 );
 // Haberler sadece bu saat aralığında (site saatine göre) çekilir.
 define( 'VENG_OH_ACTIVE_HOUR_START', 6 );
 define( 'VENG_OH_ACTIVE_HOUR_END', 22 );
@@ -630,6 +633,18 @@ function veng_oh_candidate_region( $item, $feed ) {
 }
 
 /**
+ * Amedspor/bölge kulüpleri ile ilgili spor haberi mi? (Spor olarak sınıflanan VE
+ * Kürt bölgesiyle ilgili olan.) Bu adaylar günlük 30 sınırının dışında, ayrı bir
+ * hakla (VENG_OH_REGIONAL_SPORTS_DAILY_CAP) değerlendirilir.
+ */
+function veng_oh_is_regional_sports( $item ) {
+	if ( 'spor' !== veng_oh_classify_category_slug( $item['title'], $item['summary'], '' ) ) {
+		return false;
+	}
+	return veng_oh_is_kurdish_related( $item['title'], $item['summary'] );
+}
+
+/**
  * Bazı kategoriler sitede farklı slug'la kurulmuş olabilir (ör. 'siyaset' yerine 'politika')
  * — tema menüsündeki (header.php) aday eşleşmesiyle aynı mantık. Bu olmadan, sitede kategori
  * 'politika' diye kuruluysa get_category_by_slug('siyaset') hep boş döner, sınıflandırılan
@@ -879,13 +894,14 @@ function veng_oh_get_daily_count() {
 	$data = get_option( 'veng_oh_daily_count' );
 	$today = current_time( 'Y-m-d' );
 	if ( ! is_array( $data ) || ( $data['date'] ?? '' ) !== $today ) {
-		return array( 'date' => $today, 'count' => 0, 'kurdish' => 0, 'world' => 0, 'other' => 0, 'sources' => array() );
+		return array( 'date' => $today, 'count' => 0, 'kurdish' => 0, 'world' => 0, 'other' => 0, 'bolge_spor' => 0, 'sources' => array() );
 	}
 	// Bugünden önce eklenen kayıtlarda bölge/kaynak alanları olmayabilir.
-	$data['kurdish'] = $data['kurdish'] ?? 0;
-	$data['world']   = $data['world'] ?? 0;
-	$data['other']   = $data['other'] ?? 0;
-	$data['sources'] = $data['sources'] ?? array();
+	$data['kurdish']    = $data['kurdish'] ?? 0;
+	$data['world']      = $data['world'] ?? 0;
+	$data['other']      = $data['other'] ?? 0;
+	$data['bolge_spor'] = $data['bolge_spor'] ?? 0;
+	$data['sources']    = $data['sources'] ?? array();
 	return $data;
 }
 
@@ -949,11 +965,6 @@ function veng_oh_run_import() {
 	}
 
 	$slots = min( VENG_OH_RUN_CAP, VENG_OH_DAILY_CAP - $daily['count'] );
-	if ( $slots <= 0 ) {
-		$lines[] = 'Günlük sınıra (' . VENG_OH_DAILY_CAP . ') ulaşıldı, bu çalışmada haber eklenmedi.';
-		update_option( 'veng_oh_last_run', array( 'time' => current_time( 'mysql' ), 'created' => 0, 'lines' => $lines ) );
-		return 0;
-	}
 
 	// Dünya kaynaklarından günlük tavana (VENG_OH_WORLD_DAILY_CAP) ulaşıldıysa, içeriği
 	// gerçekten Kürtlerle ilgili OLMAYAN "world" adayları bu turda hiç değerlendirmeye
@@ -965,12 +976,44 @@ function veng_oh_run_import() {
 		} ) );
 	}
 
+	// ÖNCELİK 0: Amedspor/bölge kulüpleri spor haberleri günlük 30 sınırının DIŞINDA,
+	// ayrı bir hakla (VENG_OH_REGIONAL_SPORTS_DAILY_CAP) değerlendirilir — ana günlük
+	// sınıra ($slots<=0) ulaşılmış olsa bile bu kısım çalışmaya devam eder.
+	$regional_sports_stories = array();
+	$regional_sports_remaining = VENG_OH_REGIONAL_SPORTS_DAILY_CAP - ( $daily['bolge_spor'] ?? 0 );
+	if ( $regional_sports_remaining > 0 ) {
+		$regional_sports_run_slots = min( VENG_OH_RUN_CAP, $regional_sports_remaining );
+		$regional_sports_candidates = array_values( array_filter( $candidates, function ( $c ) {
+			return veng_oh_is_regional_sports( $c['item'] );
+		} ) );
+		if ( $regional_sports_candidates ) {
+			$regional_sports_stories = veng_oh_group_and_pick_stories( $regional_sports_candidates, $regional_sports_run_slots );
+			$used_links = array();
+			foreach ( $regional_sports_stories as $rs_story ) {
+				foreach ( $rs_story as $c ) {
+					$used_links[] = $c['item']['link'];
+				}
+			}
+			$candidates = array_values( array_filter( $candidates, function ( $c ) use ( $used_links ) {
+				return ! in_array( $c['item']['link'], $used_links, true );
+			} ) );
+		}
+	}
+
+	if ( $slots <= 0 && empty( $regional_sports_stories ) ) {
+		$lines[] = 'Günlük sınıra (' . VENG_OH_DAILY_CAP . ') ve bölge spor ek sınırına (' . VENG_OH_REGIONAL_SPORTS_DAILY_CAP . ') ulaşıldı, bu çalışmada haber eklenmedi.';
+		update_option( 'veng_oh_last_run', array( 'time' => current_time( 'mysql' ), 'created' => 0, 'lines' => $lines ) );
+		return 0;
+	}
+
+	$stories = array();
+	if ( $slots > 0 ) {
+
 	// 2. Aşama (öncelik 1): VENG_OH_SOURCE_DAILY_MINS'te adı geçen kaynaklardan henüz
 	// günlük asgariye ulaşmamış olanlar varsa, adayı olduğu sürece HER ŞEYDEN ÖNCE o
 	// kaynaktan bir haber seçilir. Bölge bazlı (Kürt/dünya) hedef zaten tutturulmuş olsa
 	// bile, belirli bir kaynak (ör. Mezopotamya Ajansı) diğer kaynaklarla rekabette
 	// sürekli kaybedip hiç seçilmeyebiliyordu — bu, o riski ortadan kaldırır.
-	$stories = array();
 	foreach ( VENG_OH_SOURCE_DAILY_MINS as $src_name => $src_min ) {
 		if ( count( $stories ) >= $slots ) {
 			break;
@@ -1020,6 +1063,8 @@ function veng_oh_run_import() {
 		$stories = array_merge( $stories, $fill );
 	}
 
+	} // if ( $slots > 0 )
+
 	$created = 0;
 	foreach ( $stories as $story ) {
 		if ( veng_oh_import_story( $story ) ) {
@@ -1032,6 +1077,21 @@ function veng_oh_run_import() {
 				$daily['sources'][ $src ] = ( $daily['sources'][ $src ] ?? 0 ) + 1;
 			}
 			$lines[] = 'Seçildi (' . count( $story ) . ' kaynak: ' . implode( ', ', $sources ) . '): ' . mb_substr( $story[0]['item']['title'], 0, 80 );
+		}
+	}
+
+	// Bölge spor "bonus" hikayeleri: ayrı sayaçla (bolge_spor) izlenir, ana 30 sınırına
+	// ($daily['count']) veya Kürt/dünya bölge hedeflerine HİÇ dahil edilmez — kaynak
+	// bazlı günlük sayaca (gösterim amaçlı) yine de eklenir.
+	foreach ( $regional_sports_stories as $story ) {
+		if ( veng_oh_import_story( $story ) ) {
+			$created++;
+			$daily['bolge_spor'] = ( $daily['bolge_spor'] ?? 0 ) + 1;
+			$sources = array_unique( array_map( function ( $c ) { return $c['feed']['source']; }, $story ) );
+			foreach ( $sources as $src ) {
+				$daily['sources'][ $src ] = ( $daily['sources'][ $src ] ?? 0 ) + 1;
+			}
+			$lines[] = 'Seçildi (bölge spor, ' . count( $story ) . ' kaynak: ' . implode( ', ', $sources ) . '): ' . mb_substr( $story[0]['item']['title'], 0, 80 );
 		}
 	}
 
@@ -1802,6 +1862,7 @@ function veng_oh_settings_page() {
 		<p><strong>Toplam otomatik haber:</strong> <?php echo esc_html( number_format_i18n( $auto_post_count ) ); ?> (sınır yok — fazlaysa "Tüm Otomatik Haberleri Şimdi Sil" ile elle temizleyebilirsin)</p>
 		<p><strong>Bugün eklenen:</strong> <?php echo esc_html( number_format_i18n( $daily_count['count'] ) ); ?> / <?php echo esc_html( number_format_i18n( VENG_OH_DAILY_CAP ) ); ?> (sunucuyu yormamak için günlük sınır, gece yarısı sıfırlanır)</p>
 		<p><strong>Bugün bölge dağılımı:</strong> Kürt bölgesi <?php echo esc_html( number_format_i18n( $daily_count['kurdish'] ) ); ?> (hedef: en az <?php echo esc_html( number_format_i18n( VENG_OH_KURDISH_DAILY_MIN ) ); ?>) · Dünya <?php echo esc_html( number_format_i18n( $daily_count['world'] ) ); ?> / <?php echo esc_html( number_format_i18n( VENG_OH_WORLD_DAILY_CAP ) ); ?> (tavan) · Diğer <?php echo esc_html( number_format_i18n( $daily_count['other'] ) ); ?></p>
+		<p><strong>Bugün bölge spor (Amedspor vb., 30 sınırının DIŞINDA ek hak):</strong> <?php echo esc_html( number_format_i18n( $daily_count['bolge_spor'] ) ); ?> / <?php echo esc_html( number_format_i18n( VENG_OH_REGIONAL_SPORTS_DAILY_CAP ) ); ?></p>
 		<p><strong>Bugün kaynak bazlı yayınlanan:</strong>
 			<?php
 			$source_counts = $daily_count['sources'] ?? array();
