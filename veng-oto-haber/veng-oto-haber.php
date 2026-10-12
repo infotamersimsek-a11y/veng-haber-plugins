@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.36
+ * Version: 1.0.37
  * Author: Veng Haber
  */
 
@@ -118,6 +118,22 @@ function veng_oh_feeds() {
 		// yok) — veng_oh_parse_channel8_sitemap() her haber linkinin kendi sayfasından
 		// og:title/og:description/og:image'ını ayrıca çekiyor.
 		array( 'url' => 'https://channel8.com/turkce/sitemap.xml', 'category' => 'gundem', 'source' => 'Channel8', 'region' => 'kurdish', 'user_agent' => $browser_ua, 'type' => 'channel8_sitemap' ),
+		// Hiper-yerel bölge gazeteleri: her il için en az bir yerel kaynak — Mardin maçı,
+		// Van'da spor, Mardin/Urfa'da çöl tozu fırtınası gibi mainstream/dünya kaynaklarının
+		// hiç yakalamadığı il-bazlı haberler (kaza, hava olayı, yerel spor) için.
+		array( 'url' => 'https://vanhabermerkezi.com/rss.xml', 'category' => 'gundem', 'source' => 'Van Haber Merkezi', 'region' => 'kurdish' ),
+		array( 'url' => 'https://www.wanhaber.com/rss', 'category' => 'gundem', 'source' => 'Wan Haber', 'region' => 'kurdish' ),
+		array( 'url' => 'https://www.mardingzt.com/feed/', 'category' => 'gundem', 'source' => 'Mardin GZT', 'region' => 'kurdish' ),
+		array( 'url' => 'https://mardinhaber.com.tr/rss', 'category' => 'gundem', 'source' => 'Mardin Haber', 'region' => 'kurdish' ),
+		array( 'url' => 'https://www.sanliurfagazetesi.com/rss', 'category' => 'gundem', 'source' => 'Şanlıurfa Gazetesi', 'region' => 'kurdish' ),
+		array( 'url' => 'https://www.batmanburada.com.tr/feed/', 'category' => 'gundem', 'source' => 'Batman Burada', 'region' => 'kurdish' ),
+		array( 'url' => 'https://www.batmanpusula.com/rss', 'category' => 'gundem', 'source' => 'Batman Pusula', 'region' => 'kurdish' ),
+		array( 'url' => 'https://www.colemerghaber.com/rss', 'category' => 'gundem', 'source' => 'Çolemêrg Haber', 'region' => 'kurdish' ),
+		array( 'url' => 'https://sirnakhaber73.com/service/rss.php', 'category' => 'gundem', 'source' => 'Şırnak Haber73', 'region' => 'kurdish' ),
+		array( 'url' => 'https://www.siirttesonsoz.com/xml/rss.php', 'category' => 'gundem', 'source' => 'Siirt\'te Sonsöz', 'region' => 'kurdish' ),
+		array( 'url' => 'https://www.agri04haber.com/rss', 'category' => 'gundem', 'source' => 'Ağrı04Haber', 'region' => 'kurdish' ),
+		array( 'url' => 'https://haber49.net/rss', 'category' => 'gundem', 'source' => 'Haber49 (Muş)', 'region' => 'kurdish' ),
+		array( 'url' => 'https://www.bitlishaber13.net/rss', 'category' => 'gundem', 'source' => 'Bitlis Haber13', 'region' => 'kurdish' ),
 	);
 
 	// Mezopotamya Ajansı: alan adı mahkeme kararıyla sık sık engelleniyor, otomatik bir
