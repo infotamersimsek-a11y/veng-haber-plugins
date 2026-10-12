@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.38
+ * Version: 1.0.39
  * Author: Veng Haber
  */
 
@@ -460,10 +460,62 @@ function veng_oh_place_name_rule() {
 	return "- İL ADI KURALI (KESİN, İSTİSNASIZ): Şu il adlarını metinde ve başlıkta HER ZAMAN kısa/yerel adlarıyla yaz, resmi uzun adlarını ASLA kullanma: Kahramanmaraş değil 'Maraş', Gaziantep değil 'Antep', Şanlıurfa değil 'Urfa'. Bu kural her türlü haberde geçerlidir, hiçbir durumda bozulmaz.\n";
 }
 
+/** Resmi Anthropic key'i veya relay (yedek) servisinden en az biri tanımlı mı. */
+function veng_oh_claude_available() {
+	$relay_url = trim( get_option( 'veng_oh_relay_base_url', '' ) );
+	$relay_key = trim( get_option( 'veng_oh_relay_api_key', '' ) );
+	return (bool) ( get_option( 'veng_oh_anthropic_api_key' ) || ( $relay_url && $relay_key ) );
+}
+
+/**
+ * Claude API'sine tek merkezden istek atar. Relay (3. parti proxy) ayarlıysa ÖNCE onu
+ * dener — relay hata verir/kapanırsa (timeout, 5xx, bağlantı hatası) otomatik olarak
+ * resmi Anthropic key'ine düşer, sistem kesintisiz devam eder. Relay ayarlı değilse
+ * doğrudan resmi key kullanılır (önceki davranışla birebir aynı).
+ */
+function veng_oh_call_claude( $body, $timeout = 40 ) {
+	$relay_url    = trim( get_option( 'veng_oh_relay_base_url', '' ) );
+	$relay_key    = trim( get_option( 'veng_oh_relay_api_key', '' ) );
+	$official_key = get_option( 'veng_oh_anthropic_api_key' );
+
+	if ( $relay_url && $relay_key ) {
+		$endpoint = rtrim( $relay_url, '/' );
+		if ( ! preg_match( '#/v1/messages$#', $endpoint ) ) {
+			$endpoint .= '/v1/messages';
+		}
+		$res = wp_remote_post( $endpoint, array(
+			'timeout' => $timeout,
+			'headers' => array(
+				'content-type'      => 'application/json',
+				'x-api-key'         => $relay_key,
+				'anthropic-version' => '2023-06-01',
+			),
+			'body'    => wp_json_encode( $body ),
+		) );
+		if ( ! is_wp_error( $res ) && 200 === wp_remote_retrieve_response_code( $res ) ) {
+			return $res;
+		}
+		veng_oh_log( 'Relay API başarısız (' . ( is_wp_error( $res ) ? $res->get_error_message() : wp_remote_retrieve_response_code( $res ) . ': ' . wp_remote_retrieve_body( $res ) ) . '), resmi Anthropic key\'ine düşülüyor.' );
+	}
+
+	if ( ! $official_key ) {
+		return new WP_Error( 'veng_oh_no_key', 'Ne relay ne resmi API anahtarı tanımlı.' );
+	}
+
+	return wp_remote_post( 'https://api.anthropic.com/v1/messages', array(
+		'timeout' => $timeout,
+		'headers' => array(
+			'content-type'      => 'application/json',
+			'x-api-key'         => $official_key,
+			'anthropic-version' => '2023-06-01',
+		),
+		'body'    => wp_json_encode( $body ),
+	) );
+}
+
 /** Kaynak haberi Veng Haber editöryel kurallarına göre kendi cümleleriyle yeniden yazar. */
 function veng_oh_editorial_rewrite( $item, $source ) {
-	$api_key = get_option( 'veng_oh_anthropic_api_key' );
-	if ( ! $api_key ) {
+	if ( ! veng_oh_claude_available() ) {
 		// Sessizce çıkıp haberi ham özetle eklemek fark edilmiyordu — artık logda görünür.
 		veng_oh_log( 'API anahtarı kayıtlı değil, haber yeniden yazılmadan (ham özetle) ekleniyor: ' . $item['title'] );
 		return null;
@@ -487,19 +539,11 @@ function veng_oh_editorial_rewrite( $item, $source ) {
 		. '{"title": "...", "summary": "...", "content_html": "<p>...</p><p>...</p>"}' . "\n"
 		. 'content_html en az 2 paragraf olsun.';
 
-	$res = wp_remote_post( 'https://api.anthropic.com/v1/messages', array(
-		'timeout' => 40,
-		'headers' => array(
-			'content-type'      => 'application/json',
-			'x-api-key'         => $api_key,
-			'anthropic-version' => '2023-06-01',
-		),
-		'body'    => wp_json_encode( array(
-			'model'      => 'claude-sonnet-5',
-			'max_tokens' => 2048,
-			'messages'   => array( array( 'role' => 'user', 'content' => $prompt ) ),
-		) ),
-	) );
+	$res = veng_oh_call_claude( array(
+		'model'      => 'claude-sonnet-5',
+		'max_tokens' => 2048,
+		'messages'   => array( array( 'role' => 'user', 'content' => $prompt ) ),
+	), 40 );
 
 	if ( is_wp_error( $res ) ) {
 		veng_oh_log( 'Anthropic isteği başarısız: ' . $res->get_error_message() );
@@ -536,8 +580,7 @@ function veng_oh_editorial_rewrite( $item, $source ) {
  * algılamasını sağlamak — bu da görünürlük ve etkileşimi artırır.
  */
 function veng_oh_editorial_merge_rewrite( $story ) {
-	$api_key = get_option( 'veng_oh_anthropic_api_key' );
-	if ( ! $api_key ) {
+	if ( ! veng_oh_claude_available() ) {
 		veng_oh_log( 'API anahtarı kayıtlı değil, harmanlanan haber yeniden yazılmadan (ilk kaynağın özetiyle) eklendi.' );
 		return null;
 	}
@@ -565,19 +608,11 @@ function veng_oh_editorial_merge_rewrite( $story ) {
 		. '{"title": "...", "summary": "...", "content_html": "<p>...</p><p>...</p>"}' . "\n"
 		. 'content_html en az 2 paragraf olsun; başlık ve içerik hiçbir kaynaktaki başlık/cümleyle aynı olmasın.';
 
-	$res = wp_remote_post( 'https://api.anthropic.com/v1/messages', array(
-		'timeout' => 45,
-		'headers' => array(
-			'content-type'      => 'application/json',
-			'x-api-key'         => $api_key,
-			'anthropic-version' => '2023-06-01',
-		),
-		'body'    => wp_json_encode( array(
-			'model'      => 'claude-sonnet-5',
-			'max_tokens' => 2048,
-			'messages'   => array( array( 'role' => 'user', 'content' => $prompt ) ),
-		) ),
-	) );
+	$res = veng_oh_call_claude( array(
+		'model'      => 'claude-sonnet-5',
+		'max_tokens' => 2048,
+		'messages'   => array( array( 'role' => 'user', 'content' => $prompt ) ),
+	), 45 );
 
 	if ( is_wp_error( $res ) ) {
 		veng_oh_log( 'Anthropic harman isteği başarısız: ' . $res->get_error_message() );
@@ -1163,8 +1198,7 @@ function veng_oh_group_and_pick_stories( $candidates, $limit ) {
 		return array_map( function ( $c ) { return array( $c ); }, $candidates );
 	}
 
-	$api_key = get_option( 'veng_oh_anthropic_api_key' );
-	if ( ! $api_key ) {
+	if ( ! veng_oh_claude_available() ) {
 		return $fallback;
 	}
 
@@ -1188,19 +1222,11 @@ function veng_oh_group_and_pick_stories( $candidates, $limit ) {
 		. $list . "\n"
 		. "Sadece seçtiğin {$limit} grubu, her grubun aday numaralarını içeren bir dizi dizisi olarak JSON döndür, başka hiçbir şey yazma: {\"groups\": [[3, 7], [1], [5, 2, 9]]}";
 
-	$res = wp_remote_post( 'https://api.anthropic.com/v1/messages', array(
-		'timeout' => 30,
-		'headers' => array(
-			'content-type'      => 'application/json',
-			'x-api-key'         => $api_key,
-			'anthropic-version' => '2023-06-01',
-		),
-		'body'    => wp_json_encode( array(
-			'model'      => 'claude-sonnet-5',
-			'max_tokens' => 512,
-			'messages'   => array( array( 'role' => 'user', 'content' => $prompt ) ),
-		) ),
-	) );
+	$res = veng_oh_call_claude( array(
+		'model'      => 'claude-sonnet-5',
+		'max_tokens' => 512,
+		'messages'   => array( array( 'role' => 'user', 'content' => $prompt ) ),
+	), 30 );
 
 	if ( is_wp_error( $res ) || wp_remote_retrieve_response_code( $res ) !== 200 ) {
 		veng_oh_log( 'Gruplama/önem sıralama isteği başarısız, ilk ' . $limit . ' aday tek tek kullanılıyor.' );
@@ -1762,6 +1788,10 @@ function veng_oh_settings_page() {
 
 	if ( isset( $_POST['veng_oh_save_settings'] ) && check_admin_referer( 'veng_oh_settings' ) ) {
 		update_option( 'veng_oh_anthropic_api_key', sanitize_text_field( wp_unslash( $_POST['veng_oh_anthropic_api_key'] ?? '' ) ) );
+		// Relay (3. parti proxy, yedek): ayarlıysa ÖNCE denenir, hata verirse resmi key'e
+		// otomatik düşülür — bkz. veng_oh_call_claude(). Boş bırakılırsa sadece resmi key kullanılır.
+		update_option( 'veng_oh_relay_base_url', esc_url_raw( wp_unslash( $_POST['veng_oh_relay_base_url'] ?? '' ) ) );
+		update_option( 'veng_oh_relay_api_key', sanitize_text_field( wp_unslash( $_POST['veng_oh_relay_api_key'] ?? '' ) ) );
 		update_option( 'veng_oh_auto_publish', isset( $_POST['veng_oh_auto_publish'] ) ? '1' : '0' );
 		// Mezopotamya Ajansı sık sık engellenip alan adı değiştiriyor — otomatik takip
 		// mekanizması bilinçli kurulmadı (mahkeme kararlarını atlatmak olurdu), onun yerine
@@ -1822,6 +1852,8 @@ function veng_oh_settings_page() {
 	}
 
 	$api_key = get_option( 'veng_oh_anthropic_api_key', '' );
+	$relay_base_url = get_option( 'veng_oh_relay_base_url', '' );
+	$relay_api_key = get_option( 'veng_oh_relay_api_key', '' );
 	$auto_publish = get_option( 'veng_oh_auto_publish', '1' ) === '1';
 	$last = get_option( 'veng_oh_last_run' );
 	$next_cron = wp_next_scheduled( 'veng_oh_import_event' );
@@ -1861,7 +1893,20 @@ function veng_oh_settings_page() {
 						<?php else : ?>
 							<span style="color:#991b1b;font-weight:700;">✗ Kayıtlı değil — haberler yeniden yazılmadan, ham özetle ekleniyor!</span>
 						<?php endif; ?>
-						<p class="description">Boşsa haberler yeniden yazılmadan, kaynak özetiyle eklenir.</p>
+						<p class="description">Boşsa haberler yeniden yazılmadan, kaynak özetiyle eklenir. Bu, relay hata verirse otomatik düşülen YEDEK key'dir — aşağıdaki relay boşsa doğrudan bu kullanılır.</p>
+					</td>
+				</tr>
+				<tr>
+					<th><label for="veng_oh_relay_base_url">Relay API Adresi (opsiyonel, öncelikli)</label></th>
+					<td>
+						<input type="text" id="veng_oh_relay_base_url" name="veng_oh_relay_base_url" value="<?php echo esc_attr( $relay_base_url ); ?>" class="regular-text" placeholder="https://..." />
+						<p class="description">Ayarlıysa ÖNCE bu denenir; relay hata verir/kapanırsa sistem otomatik olarak yukarıdaki resmi Anthropic key'ine düşer, kesinti olmaz. Boş bırakılırsa relay hiç kullanılmaz.</p>
+					</td>
+				</tr>
+				<tr>
+					<th><label for="veng_oh_relay_api_key">Relay API Anahtarı</label></th>
+					<td>
+						<input type="text" id="veng_oh_relay_api_key" name="veng_oh_relay_api_key" value="<?php echo esc_attr( $relay_api_key ); ?>" class="regular-text" />
 					</td>
 				</tr>
 				<tr>
