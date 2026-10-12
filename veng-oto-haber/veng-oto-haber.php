@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.37
+ * Version: 1.0.38
  * Author: Veng Haber
  */
 
@@ -452,6 +452,14 @@ function veng_oh_regional_voice_rule() {
 	return "- BÖLGE SESİ İSTİSNASI: Haber Kürt bölgesinin kendisi, halkı, kültürü veya toplumsal yaşamıyla ilgiliyse, bölgede yaşayan insanlara özgü sıcak, yerel bir ses kullanabilirsin — bölgeyi ve halkını öven bir ton caizdir, mainstream medyanın atladığı/yumuşattığı toplumsal etkiyi ve mağdur/halk deneyimini öne çıkarmaktan çekinme. AMA bu asla belirli bir SİYASİ PARTİ, POLİTİKACI veya KURUMA (belediye, parti vb.) yönelik övgü ya da suçlama anlamına gelmez — onlar hakkında yukarıdaki tarafsızlık kuralı (sadece olgu, övgü/suçlama yok) aynen geçerlidir. Övgü bölgeye/halka yönelik olabilir, bir siyasi aktöre asla.\n";
 }
 
+/**
+ * Site sahibinin kesin talimatı (2026-10-12): bazı il adları için her zaman yerel/kısa
+ * adları kullan, resmi uzun adları KESİNLİKLE kullanma — istisna yok, hiçbir haberde bozulmaz.
+ */
+function veng_oh_place_name_rule() {
+	return "- İL ADI KURALI (KESİN, İSTİSNASIZ): Şu il adlarını metinde ve başlıkta HER ZAMAN kısa/yerel adlarıyla yaz, resmi uzun adlarını ASLA kullanma: Kahramanmaraş değil 'Maraş', Gaziantep değil 'Antep', Şanlıurfa değil 'Urfa'. Bu kural her türlü haberde geçerlidir, hiçbir durumda bozulmaz.\n";
+}
+
 /** Kaynak haberi Veng Haber editöryel kurallarına göre kendi cümleleriyle yeniden yazar. */
 function veng_oh_editorial_rewrite( $item, $source ) {
 	$api_key = get_option( 'veng_oh_anthropic_api_key' );
@@ -471,6 +479,7 @@ function veng_oh_editorial_rewrite( $item, $source ) {
 		. "- Orijinal metinde geçen sayıları (skor, tarih, miktar, yaş, istatistik vb.) OLDUĞU GİBİ koru — yeniden yazarken yuvarlamaya, değiştirmeye veya yanlış hatırlamaya çalışma, aynen aktar.\n"
 		. veng_oh_sports_hometown_rule()
 		. veng_oh_regional_voice_rule()
+		. veng_oh_place_name_rule()
 		. "- Magazinsel/abartılı ifadelerden kaçın, gazetecilik standardına uygun ol.\n\n"
 		. 'Orijinal başlık: "' . $item['title'] . "\"\n"
 		. 'Orijinal özet: "' . mb_substr( $item['summary'], 0, 600 ) . "\"\n\n"
@@ -549,6 +558,7 @@ function veng_oh_editorial_merge_rewrite( $story ) {
 		. "- Kaynaklarda geçen sayıları (skor, tarih, miktar, yaş, istatistik vb.) OLDUĞU GİBİ koru, değiştirme; kaynaklar arasında sayı çelişkisi varsa en güncel/çok tekrarlanan kaynağı esas al.\n"
 		. veng_oh_sports_hometown_rule()
 		. veng_oh_regional_voice_rule()
+		. veng_oh_place_name_rule()
 		. "- Magazinsel/abartılı ifadelerden kaçın, gazetecilik standardına uygun ol.\n\n"
 		. $sources_text . "\n"
 		. "Şunu JSON olarak döndür (başka hiçbir şey yazma):\n"
