@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.33
+ * Version: 1.0.34
  * Author: Veng Haber
  */
 
@@ -408,6 +408,19 @@ function veng_oh_already_imported( $link ) {
 	return ! empty( $existing );
 }
 
+/**
+ * Amedspor ve diğer Kürt bölgesi kulüplerinin spor haberlerinde, genel tarafsızlık
+ * kuralının İSTİSNASI olarak "yerel takım perspektifi" uygulanır — mainstream medya
+ * (ör. Milliyet, Sporx) büyük/tanınmış rakibi hikayenin öznesi yapıp bölge takımını
+ * kenara iterken (kazansa bile), bölgesel gazeteler (ör. Mücadele Gazetesi,
+ * mardingzt.com) kendi takımlarını her zaman öznesi yapar — bu siyasi tarafgirlik
+ * değil, dünya çapında standart yerel-takım spor gazeteciliği uygulamasıdır. Site
+ * sahibinin onayladığı örneklerle (2026-10-12) doğrulandı.
+ */
+function veng_oh_sports_hometown_rule() {
+	return "- SPOR HABERİ İSTİSNASI: Haber Amedspor veya başka bir Kürt bölgesi kulübüyle (Diyarbakır, Mardin, Batman, Urfa, Van, Hakkari, Şırnak, Siirt, Ağrı, Muş, Bitlis illerinden) ilgiliyse, yukarıdaki tarafsızlık kuralının istisnasıdır: bu takımı rakip ne kadar büyük/tanınmış olursa olsun HİKAYENİN ÖZNESİ yap, başlıkta her zaman bu takımın adı özne olsun (rakibin adı asla özne olmasın). Takım kazandıysa coşkulu, 'tarihi zafer' tonunda yaz, taraftar sayısı/sahne büyüklüğü gibi detayları öne çıkar. Takım kaybetti/berabere kaldıysa 'son dakika yıkımı' gibi duygusal ama olgulara sadık bir kayıp çerçevesi kullan, hak ettiğini alamamış gibi sun. (Siyaset/toplum/ekonomi gibi diğer TÜM konularda yukarıdaki tarafsızlık kuralı aynen geçerli, bu istisna SADECE spor için.)\n";
+}
+
 /** Kaynak haberi Veng Haber editöryel kurallarına göre kendi cümleleriyle yeniden yazar. */
 function veng_oh_editorial_rewrite( $item, $source ) {
 	$api_key = get_option( 'veng_oh_anthropic_api_key' );
@@ -425,6 +438,7 @@ function veng_oh_editorial_rewrite( $item, $source ) {
 		. "- İddia/açıklama niteliğindeki ifadeleri \"iddia edildi\", \"açıklandı\", \"belirtildi\" gibi temkinli atıf kalıplarıyla ver, kesin doğru gibi sunma.\n"
 		. "- Uydurma detay, sayı, isim veya alıntı ekleme; yalnızca verilen bilgiyle sınırlı kal, belirsizse genel ifade kullan.\n"
 		. "- Orijinal metinde geçen sayıları (skor, tarih, miktar, yaş, istatistik vb.) OLDUĞU GİBİ koru — yeniden yazarken yuvarlamaya, değiştirmeye veya yanlış hatırlamaya çalışma, aynen aktar.\n"
+		. veng_oh_sports_hometown_rule()
 		. "- Magazinsel/abartılı ifadelerden kaçın, gazetecilik standardına uygun ol.\n\n"
 		. 'Orijinal başlık: "' . $item['title'] . "\"\n"
 		. 'Orijinal özet: "' . mb_substr( $item['summary'], 0, 600 ) . "\"\n\n"
@@ -501,6 +515,7 @@ function veng_oh_editorial_merge_rewrite( $story ) {
 		. "- İddia/açıklama niteliğindeki ifadeleri \"iddia edildi\", \"açıklandı\", \"belirtildi\" gibi temkinli atıf kalıplarıyla ver, kesin doğru gibi sunma.\n"
 		. "- Kaynaklarda GEÇMEYEN hiçbir detay, sayı, isim veya alıntı uydurma; sadece verilen bilgiyle sınırlı kal.\n"
 		. "- Kaynaklarda geçen sayıları (skor, tarih, miktar, yaş, istatistik vb.) OLDUĞU GİBİ koru, değiştirme; kaynaklar arasında sayı çelişkisi varsa en güncel/çok tekrarlanan kaynağı esas al.\n"
+		. veng_oh_sports_hometown_rule()
 		. "- Magazinsel/abartılı ifadelerden kaçın, gazetecilik standardına uygun ol.\n\n"
 		. $sources_text . "\n"
 		. "Şunu JSON olarak döndür (başka hiçbir şey yazma):\n"
