@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.35
+ * Version: 1.0.36
  * Author: Veng Haber
  */
 
@@ -424,6 +424,18 @@ function veng_oh_sports_hometown_rule() {
 	return "- SPOR HABERİ İSTİSNASI: Haber Amedspor veya başka bir Kürt bölgesi kulübüyle (Diyarbakır, Mardin, Batman, Urfa, Van, Hakkari, Şırnak, Siirt, Ağrı, Muş, Bitlis illerinden) ilgiliyse, yukarıdaki tarafsızlık kuralının istisnasıdır: bu takımı rakip ne kadar büyük/tanınmış olursa olsun HİKAYENİN ÖZNESİ yap, başlıkta her zaman bu takımın adı özne olsun (rakibin adı asla özne olmasın). Takım kazandıysa coşkulu, 'tarihi zafer' tonunda yaz, taraftar sayısı/sahne büyüklüğü gibi detayları öne çıkar. Takım kaybetti/berabere kaldıysa 'son dakika yıkımı' gibi duygusal ama olgulara sadık bir kayıp çerçevesi kullan, hak ettiğini alamamış gibi sun. (Siyaset/toplum/ekonomi gibi diğer TÜM konularda yukarıdaki tarafsızlık kuralı aynen geçerli, bu istisna SADECE spor için.)\n";
 }
 
+/**
+ * Kürt bölgesiyle ilgili haberlerde (anma, toplumsal olay, tarih, kültür vb.) mainstream
+ * medyanın yumuşattığı/atladığı toplumsal etkiyi ve bölge halkına özgü yerel sesi
+ * yansıtmak için — ama bu, belirli bir SİYASİ PARTİ/KİŞİ/KURUMA övgü ya da suçlama
+ * anlamına GELMEZ, o kural (genel tarafsızlık) değişmeden geçerli kalır. Site sahibinin
+ * onayladığı sınırlarla (2026-10-12) doğrulandı: bölgeyi/halkını övmek serbest,
+ * siyasi aktörü övmek/suçlamak yasak.
+ */
+function veng_oh_regional_voice_rule() {
+	return "- BÖLGE SESİ İSTİSNASI: Haber Kürt bölgesinin kendisi, halkı, kültürü veya toplumsal yaşamıyla ilgiliyse, bölgede yaşayan insanlara özgü sıcak, yerel bir ses kullanabilirsin — bölgeyi ve halkını öven bir ton caizdir, mainstream medyanın atladığı/yumuşattığı toplumsal etkiyi ve mağdur/halk deneyimini öne çıkarmaktan çekinme. AMA bu asla belirli bir SİYASİ PARTİ, POLİTİKACI veya KURUMA (belediye, parti vb.) yönelik övgü ya da suçlama anlamına gelmez — onlar hakkında yukarıdaki tarafsızlık kuralı (sadece olgu, övgü/suçlama yok) aynen geçerlidir. Övgü bölgeye/halka yönelik olabilir, bir siyasi aktöre asla.\n";
+}
+
 /** Kaynak haberi Veng Haber editöryel kurallarına göre kendi cümleleriyle yeniden yazar. */
 function veng_oh_editorial_rewrite( $item, $source ) {
 	$api_key = get_option( 'veng_oh_anthropic_api_key' );
@@ -442,6 +454,7 @@ function veng_oh_editorial_rewrite( $item, $source ) {
 		. "- Uydurma detay, sayı, isim veya alıntı ekleme; yalnızca verilen bilgiyle sınırlı kal, belirsizse genel ifade kullan.\n"
 		. "- Orijinal metinde geçen sayıları (skor, tarih, miktar, yaş, istatistik vb.) OLDUĞU GİBİ koru — yeniden yazarken yuvarlamaya, değiştirmeye veya yanlış hatırlamaya çalışma, aynen aktar.\n"
 		. veng_oh_sports_hometown_rule()
+		. veng_oh_regional_voice_rule()
 		. "- Magazinsel/abartılı ifadelerden kaçın, gazetecilik standardına uygun ol.\n\n"
 		. 'Orijinal başlık: "' . $item['title'] . "\"\n"
 		. 'Orijinal özet: "' . mb_substr( $item['summary'], 0, 600 ) . "\"\n\n"
@@ -519,6 +532,7 @@ function veng_oh_editorial_merge_rewrite( $story ) {
 		. "- Kaynaklarda GEÇMEYEN hiçbir detay, sayı, isim veya alıntı uydurma; sadece verilen bilgiyle sınırlı kal.\n"
 		. "- Kaynaklarda geçen sayıları (skor, tarih, miktar, yaş, istatistik vb.) OLDUĞU GİBİ koru, değiştirme; kaynaklar arasında sayı çelişkisi varsa en güncel/çok tekrarlanan kaynağı esas al.\n"
 		. veng_oh_sports_hometown_rule()
+		. veng_oh_regional_voice_rule()
 		. "- Magazinsel/abartılı ifadelerden kaçın, gazetecilik standardına uygun ol.\n\n"
 		. $sources_text . "\n"
 		. "Şunu JSON olarak döndür (başka hiçbir şey yazma):\n"
