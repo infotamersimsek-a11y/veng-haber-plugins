@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.40
+ * Version: 1.0.41
  * Author: Veng Haber
  */
 
@@ -809,7 +809,13 @@ function veng_oh_import_story( $story ) {
 
 	$attribution = '<p><em>Güncel Haber Kaynak: ' . esc_html( $sources_label ) . '</em></p>';
 
-	$status = get_option( 'veng_oh_auto_publish', '1' ) === '1' ? 'publish' : 'draft';
+	// Yeniden yazma başarısız olduysa (API hatası, relay sorunu vb.) ham/kırpılmış kaynak
+	// metni (ör. sadece fotoğraf altyazısı) canlıya çıkmasın — otomatik yayın açık olsa
+	// bile taslak kalır, editör elle kontrol edip yayınlar.
+	$status = ( $draft && get_option( 'veng_oh_auto_publish', '1' ) === '1' ) ? 'publish' : 'draft';
+	if ( ! $draft ) {
+		veng_oh_log( 'Yeniden yazma başarısız, ham içerikle TASLAK olarak eklendi (yayınlanmadı): ' . $title );
+	}
 
 	$post_id = wp_insert_post( array(
 		'post_type'     => 'post',
