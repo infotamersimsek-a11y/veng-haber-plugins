@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.41
+ * Version: 1.0.42
  * Author: Veng Haber
  */
 
@@ -457,7 +457,7 @@ function veng_oh_regional_voice_rule() {
  * adları kullan, resmi uzun adları KESİNLİKLE kullanma — istisna yok, hiçbir haberde bozulmaz.
  */
 function veng_oh_place_name_rule() {
-	return "- İL ADI KURALI (KESİN, İSTİSNASIZ): Şu il adlarını metinde ve başlıkta HER ZAMAN kısa/yerel adlarıyla yaz, resmi uzun adlarını ASLA kullanma: Kahramanmaraş değil 'Maraş', Gaziantep değil 'Antep', Şanlıurfa değil 'Urfa'. Bu kural her türlü haberde geçerlidir, hiçbir durumda bozulmaz.\n";
+	return "- İL ADI KURALI (KESİN, İSTİSNASIZ): Şu il adlarını metinde ve başlıkta HER ZAMAN kısa/yerel adlarıyla yaz, resmi uzun adlarını ASLA kullanma: Kahramanmaraş değil 'Maraş', Gaziantep değil 'Antep', Şanlıurfa değil 'Urfa'. Bu, il adının TEK BAŞINA geçtiği her yerde değil, başka bir kelimeyle BİRLEŞİK geçtiği her yerde de geçerlidir — ör. kulüp/kurum/takım adları: 'Şanlıurfaspor' değil 'Urfaspor', 'Gaziantepspor' değil 'Antepspor', 'Kahramanmaraşspor' değil 'Maraşspor'. 'Şanlı', 'Gazi', 'Kahraman' gibi önekler hiçbir biçimde, hiçbir kelimenin içinde bile kullanılmaz. Bu kural her türlü haberde geçerlidir, hiçbir durumda bozulmaz.\n";
 }
 
 /** Resmi Anthropic key'i veya relay (yedek) servisinden en az biri tanımlı mı. */
@@ -1249,10 +1249,10 @@ function veng_oh_group_and_pick_stories( $candidates, $limit ) {
 	$prompt = "Aşağıda bu saat içinde yayına aday " . count( $candidates ) . " haber başlığı var. Farklı kaynaklardan gelen ama AYNI olayı/konuyu anlatan başlıkları aynı grupta topla (ör. 3 farklı kaynak aynı saldırıyı/açıklamayı farklı başlıklarla veriyorsa bunlar bir grup). Konusu farklı olanları tek başına kendi grubunda bırak.\n\n"
 		. "Sonra grupları editöryel önceliğe göre sırala ve en öncelikli {$limit} grubu seç.\n"
 		. "Öncelik ver (yüksekten düşüğe):\n"
-		. "1) Kürt coğrafyasını (Diyarbakır, Mardin, Batman, Urfa/Şanlıurfa, Van, Hakkari, Şırnak, Siirt, Ağrı, Muş, Bitlis gibi doğu/güneydoğu illeri) ve Kürtlerle ilgili HER konudaki haberler (siyaset, kültür-sanat, toplum, ekonomi, SPOR dahil — özellikle Amedspor ve bölge kulüpleri maç/transfer haberleri de buraya girer, rutin spor sayılmaz) — bu sitenin ana odağı, bunlara geniş yer ver.\n"
+		. "1) Kürt coğrafyasını (Diyarbakır, Mardin, Batman, Urfa/Şanlıurfa, Van, Hakkari, Şırnak, Siirt, Ağrı, Muş, Bitlis gibi doğu/güneydoğu illeri) ve Kürtlerle ilgili HER konudaki haberler (siyaset, kültür-sanat, toplum, ekonomi, SPOR dahil — özellikle Amedspor ve bölge kulüpleri maç/transfer haberleri de buraya girer, rutin spor sayılmaz) — bu sitenin ana odağı, bunlara geniş yer ver. AMA il bazlı yerel kaynaklardan (Van Haber Merkezi, Wan Haber, Mardin GZT, Mardin Haber, Şanlıurfa Gazetesi, Batman Burada, Batman Pusula, Çolemêrg Haber, Şırnak Haber73, Siirt'te Sonsöz, Ağrı04Haber, Haber49, Bitlis Haber13) gelen haberlerde ÖNEMLİ/GERÇEK haber ile BASİT/RUTİN duyuruyu ayır: can kaybı, yaralanma, trafik kazası, doğal afet (sel, fırtına, deprem vb.), önemli bir maç/turnuva SONUCU (galibiyet/final/şampiyonluk gibi somut başarı) önceliklidir; sadece 'katıldı', 'temsil ediyor', 'başarı diledi', kutlama/duyuru mesajı türünden, haber değeri düşük, ana akımın her gün yayınladığı türden basit anonsları SEÇME — bu site ana akım yerel basın gibi her küçük duyuruyu haberleştirmez.\n"
 		. "2) Dünya gündemini doğrudan ilgilendiren önemli gelişmeler (uluslararası siyaset, savaş/çatışma, büyük afet, dünya kültür-sanatı).\n"
 		. "3) Bölge fark etmeksizin ÇOK önemli gelişmeler: can kaybı/yaralanma, patlama/saldırı/afet, geniş kitleyi etkileyen kritik resmi karar/açıklama (yargı, ekonomi, seçim, güvenlik).\n"
-		. "Düşük öncelik ver: Türkiye geneliyle ilgili ama yukarıdaki 3. maddeye girmeyen sıradan/rutin iç haberler (ana akım medyada her gün çıkan türden, bölgeyle/Kürtlerle doğrudan ilgisi olmayan) — bu site ana akım Türkiye medyası gibi davranmasın, Türkiye haberlerine sadece gerçekten önemliyse yer versin. Galatasaray/Fenerbahçe/Beşiktaş gibi büyük şehir kulüplerinin rutin spor sonucu, magazin, tekrar eden/az bilgi içeren haberler de düşük öncelikli (Amedspor/bölge kulüpleri bunun dışında, madde 1'de).\n\n"
+		. "Düşük öncelik ver: Türkiye geneliyle ilgili ama yukarıdaki 3. maddeye girmeyen sıradan/rutin iç haberler (ana akım medyada her gün çıkan türden, bölgeyle/Kürtlerle doğrudan ilgisi olmayan) — bu site ana akım Türkiye medyası gibi davranmasın, Türkiye haberlerine sadece gerçekten önemliyse yer versin. Galatasaray/Fenerbahçe/Beşiktaş gibi büyük şehir kulüplerinin rutin spor sonucu, magazin, tekrar eden/az bilgi içeren haberler de düşük öncelikli (Amedspor/bölge kulüpleri bunun dışında, madde 1'de). 'Türkiye'yi temsil ediyor', milli forma/bayrak vurgulu, katılım-düzeyinde (henüz sonuç/başarı yok) spor haberleri de düşük öncelikli.\n\n"
 		. "Kaynak dağılımı: elinde yeterli aday varsa, seçtiğin {$limit} grubun yaklaşık %70'i şu kaynaklardan olsun: Mezopotamya Ajansı, Bianet, Rudaw, Channel8 (Kürt bölgesi/siyaseti odaklı kaynaklar). Bu oranı tutturacak kadar aday yoksa (ör. o kaynaklardan o saat az haber gelmişse) zorlama, mevcut en iyi adaylardan seç — asıl öncelik yukarıdaki 1-2-3 sıralaması.\n\n"
 		. $list . "\n"
 		. "Sadece seçtiğin {$limit} grubu, her grubun aday numaralarını içeren bir dizi dizisi olarak JSON döndür, başka hiçbir şey yazma: {\"groups\": [[3, 7], [1], [5, 2, 9]]}";
