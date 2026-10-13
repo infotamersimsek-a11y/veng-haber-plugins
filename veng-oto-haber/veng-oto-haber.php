@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.39
+ * Version: 1.0.40
  * Author: Veng Haber
  */
 
@@ -474,6 +474,8 @@ function veng_oh_claude_available() {
  * doğrudan resmi key kullanılır (önceki davranışla birebir aynı).
  */
 function veng_oh_call_claude( $body, $timeout = 40 ) {
+	global $veng_oh_relay_stats;
+
 	$relay_url    = trim( get_option( 'veng_oh_relay_base_url', '' ) );
 	$relay_key    = trim( get_option( 'veng_oh_relay_api_key', '' ) );
 	$official_key = get_option( 'veng_oh_anthropic_api_key' );
@@ -493,13 +495,25 @@ function veng_oh_call_claude( $body, $timeout = 40 ) {
 			'body'    => wp_json_encode( $body ),
 		) );
 		if ( ! is_wp_error( $res ) && 200 === wp_remote_retrieve_response_code( $res ) ) {
+			if ( isset( $veng_oh_relay_stats ) ) {
+				$veng_oh_relay_stats['relay_ok']++;
+			}
 			return $res;
 		}
-		veng_oh_log( 'Relay API başarısız (' . ( is_wp_error( $res ) ? $res->get_error_message() : wp_remote_retrieve_response_code( $res ) . ': ' . wp_remote_retrieve_body( $res ) ) . '), resmi Anthropic key\'ine düşülüyor.' );
+		$reason = is_wp_error( $res ) ? $res->get_error_message() : wp_remote_retrieve_response_code( $res ) . ': ' . mb_substr( wp_remote_retrieve_body( $res ), 0, 200 );
+		veng_oh_log( 'Relay API başarısız (' . $reason . '), resmi Anthropic key\'ine düşülüyor.' );
+		if ( isset( $veng_oh_relay_stats ) ) {
+			$veng_oh_relay_stats['relay_fail']++;
+			$veng_oh_relay_stats['last_error'] = $reason;
+		}
 	}
 
 	if ( ! $official_key ) {
 		return new WP_Error( 'veng_oh_no_key', 'Ne relay ne resmi API anahtarı tanımlı.' );
+	}
+
+	if ( isset( $veng_oh_relay_stats ) ) {
+		$veng_oh_relay_stats['official_used']++;
 	}
 
 	return wp_remote_post( 'https://api.anthropic.com/v1/messages', array(
@@ -1002,6 +1016,12 @@ function veng_oh_run_import() {
 	$lines = array();
 	$daily = veng_oh_get_daily_count();
 
+	// Relay (3. parti proxy) gerçekten çalışıyor mu, yoksa sessizce resmi key'e mi
+	// düşüyor — bu bilgi sadece PHP error_log'a yazılıyordu (bkz. veng_oh_log), admin
+	// sayfasından görünmüyordu. Bu sayaç Durum kutusunda görünür hale getirmek için.
+	global $veng_oh_relay_stats;
+	$veng_oh_relay_stats = array( 'relay_ok' => 0, 'relay_fail' => 0, 'official_used' => 0 );
+
 	// 1. Aşama: tüm kaynaklardan henüz eklenmemiş aday haberleri topla (hiçbirini
 	// henüz yazmadan) — böylece hangisinin önemli olduğuna, sadece ilk bulunana
 	// değil, tüm adaylara bakarak karar verilebilir.
@@ -1171,6 +1191,15 @@ function veng_oh_run_import() {
 	}
 
 	update_option( 'veng_oh_daily_count', $daily );
+
+	global $veng_oh_relay_stats;
+	if ( trim( get_option( 'veng_oh_relay_base_url', '' ) ) ) {
+		$relay_line = 'Relay API: ' . $veng_oh_relay_stats['relay_ok'] . ' başarılı, ' . $veng_oh_relay_stats['relay_fail'] . ' başarısız (resmi key\'e düşüldü), ' . $veng_oh_relay_stats['official_used'] . ' kez resmi key direkt kullanıldı.';
+		if ( $veng_oh_relay_stats['relay_fail'] > 0 && ! empty( $veng_oh_relay_stats['last_error'] ) ) {
+			$relay_line .= ' Son hata: ' . $veng_oh_relay_stats['last_error'];
+		}
+		$lines[] = $relay_line;
+	}
 
 	update_option( 'veng_oh_last_run', array(
 		'time'    => current_time( 'mysql' ),
