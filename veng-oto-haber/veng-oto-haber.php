@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.42
+ * Version: 1.0.43
  * Author: Veng Haber
  */
 
@@ -584,6 +584,11 @@ function veng_oh_editorial_rewrite( $item, $source ) {
 	if ( empty( $parsed['title'] ) || empty( $parsed['content_html'] ) ) {
 		return null;
 	}
+	// Tek, aşırı yoğun bir cümleden ibaret "makale" (kaynak çok kısaysa olabiliyor) okunurluğu
+	// bozuyor — en az 2 paragraflık gerçek içerik yoksa başarısız say, ham veri yayınlanmasın.
+	if ( mb_strlen( wp_strip_all_tags( $parsed['content_html'] ) ) < 150 ) {
+		return null;
+	}
 	return $parsed;
 }
 
@@ -653,6 +658,11 @@ function veng_oh_editorial_merge_rewrite( $story ) {
 	if ( empty( $parsed['title'] ) || empty( $parsed['content_html'] ) ) {
 		return null;
 	}
+	// Tek, aşırı yoğun bir cümleden ibaret "makale" (kaynak çok kısaysa olabiliyor) okunurluğu
+	// bozuyor — en az 2 paragraflık gerçek içerik yoksa başarısız say, ham veri yayınlanmasın.
+	if ( mb_strlen( wp_strip_all_tags( $parsed['content_html'] ) ) < 150 ) {
+		return null;
+	}
 	return $parsed;
 }
 
@@ -670,7 +680,7 @@ function veng_oh_classify_category_slug( $title, $summary, $default_slug ) {
 		'spor'         => array( 'futbol', ' maç', 'süper lig', 'galatasaray', 'fenerbahçe', 'beşiktaş', 'transfer', 'şampiyon', 'basketbol', 'voleybol', 'milli takım', 'teknik direktör', 'amedspor', 'diyarbakırspor' ),
 		'teknoloji'    => array( 'yapay zeka', 'teknoloji', 'akıllı telefon', 'uygulama', 'yazılım', 'siber', 'apple', 'google', 'microsoft', 'bilgisayar', 'internet sitesi' ),
 		'saglik'       => array( 'sağlık bakanlığı', 'hastane', 'doktor', 'aşı', 'virüs', 'salgın', 'ilaç', 'tedavi', 'covid', 'ameliyat' ),
-		'siyaset'      => array( 'meclis', 'seçim', 'cumhurbaşkanı', 'bakanı', 'parti', 'ak parti', 'chp', 'mhp', 'dem parti', 'hükümet', 'vekil', 'anayasa' ),
+		'siyaset'      => array( 'meclis', 'seçim', 'cumhurbaşkanı', 'bakanı', 'parti', 'ak parti', 'chp', 'mhp', 'dem parti', 'hükümet', 'vekil', 'anayasa', 'pkk', 'terör örgütü', 'silah bırak', 'silahsızlanma', 'güvenlik kaynakları', 'milli istihbarat', ' mit ' ),
 		'kultur-sanat' => array( 'sinema', 'film', 'tiyatro', 'sanat', 'müze', 'festival', 'roman', 'sergi', 'konser' ),
 		'magazin'      => array( 'ünlü', 'magazin', 'evlendi', 'boşandı', 'oyuncusu', 'şarkıcı' ),
 	);
