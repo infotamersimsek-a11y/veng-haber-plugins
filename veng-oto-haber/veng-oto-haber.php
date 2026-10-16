@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.48
+ * Version: 1.0.49
  * Author: Veng Haber
  */
 
@@ -1256,10 +1256,14 @@ function veng_oh_run_catchup_import( $target = 10 ) {
 
 	delete_option( 'veng_oh_daily_count' );
 
+	// Asıl darboğaz besleme (RSS) sayısı değil, slot başına bir Claude API çağrısı —
+	// run_cap küçük tutulmazsa (örn. 10 slot = 10 ardışık AI isteği) tek istek yine
+	// sunucu/Cloudflare zaman aşımına (520) takılıyor. run_cap SABİT küçük (3) kalır,
+	// daily_cap (o günün toplam hedefi) ayrı büyür — böylece her tıklama hızlı kalır.
 	$scale = $target / VENG_OH_DAILY_CAP;
 	$GLOBALS['veng_oh_catchup_overrides'] = array(
 		'daily_cap'           => $target,
-		'run_cap'             => $target,
+		'run_cap'             => min( 3, $target ),
 		'world_cap'           => (int) ceil( VENG_OH_WORLD_DAILY_CAP * $scale ),
 		'kurdish_min'         => (int) ceil( VENG_OH_KURDISH_DAILY_MIN * $scale ),
 		'regional_sports_cap' => (int) ceil( VENG_OH_REGIONAL_SPORTS_DAILY_CAP * $scale ),
@@ -1903,7 +1907,7 @@ function veng_oh_settings_page() {
 
 	if ( isset( $_POST['veng_oh_run_catchup'] ) && check_admin_referer( 'veng_oh_settings' ) ) {
 		$catchup_total = veng_oh_run_catchup_import( 10 );
-		echo '<div class="notice notice-success"><p><strong>Toplu yükleme tamamlandı:</strong> ' . intval( $catchup_total ) . ' haber eklendi (bu tur en fazla 10, tek hafif istek). Daha fazla kayıp haber varsa butona tekrar bas.</p></div>';
+		echo '<div class="notice notice-success"><p><strong>Toplu yükleme tamamlandı:</strong> ' . intval( $catchup_total ) . ' haber eklendi (bu tur en fazla 3, tek hafif istek — sunucu zaman aşımına düşmesin diye kasıtlı küçük). Daha fazla kayıp haber varsa butona tekrar bas.</p></div>';
 	}
 
 	if ( isset( $_POST['veng_oh_backfill_alt'] ) && check_admin_referer( 'veng_oh_settings' ) ) {
@@ -2023,7 +2027,7 @@ function veng_oh_settings_page() {
 				<button type="submit" name="veng_oh_save_settings" class="button button-primary">Ayarları Kaydet</button>
 				<button type="submit" name="veng_oh_run_now" class="button">Şimdi Çalıştır</button>
 				<button type="submit" name="veng_oh_reset_daily_count" class="button" onclick="return confirm('Bugünkü sayaç (toplam + Kürt/Dünya/Diğer dağılımı) sıfırlanacak. Yazı silinmez, sadece sayaç. Emin misin?');">Günlük Sayacı Sıfırla</button>
-				<button type="submit" name="veng_oh_run_catchup" class="button" onclick="return confirm('Kaybedilen haberleri telafi etmek için bu tur en fazla 10 haber yüklenecek, tek hafif istek (normal Şimdi Çalıştır kadar hızlı). Daha fazlası gerekirse butona tekrar basarsın. Emin misin?');">Toplu Yükleme (10&#039;ar 10&#039;ar, Kayıp Günleri Telafi Et)</button>
+				<button type="submit" name="veng_oh_run_catchup" class="button" onclick="return confirm('Kaybedilen haberleri telafi etmek için bu tur en fazla 3 haber yüklenecek (sunucu zaman aşımı yaşanmasın diye kasıtlı küçük tutuldu). Hedefe ulaşmak için birkaç kez basman gerekir. Emin misin?');">Toplu Yükleme (3&#039;er 3&#039;er, Kayıp Günleri Telafi Et)</button>
 				<button type="submit" name="veng_oh_backfill_alt" class="button">Eski Görsellere Alt Metin Doldur</button>
 				<button type="submit" name="veng_oh_backfill_images" class="button">Eksik Görselleri Tespit Et ve Yükle</button>
 				<button type="submit" name="veng_oh_backfill_attribution" class="button">Kaynak Notunu Sadeleştir</button>
