@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.44
+ * Version: 1.0.45
  * Author: Veng Haber
  */
 
@@ -1010,6 +1010,18 @@ function veng_oh_get_daily_count() {
 	return $data;
 }
 
+/**
+ * Toplu yakalama (catch-up) çalışması sırasında günlük sınırları geçici olarak büyütmek
+ * için — normal saatlik çalışmada bu hep boştur, sabitler (VENG_OH_*) aynen kullanılır.
+ * bkz. veng_oh_run_catchup_import().
+ */
+function veng_oh_eff_daily_cap() { return $GLOBALS['veng_oh_catchup_overrides']['daily_cap'] ?? VENG_OH_DAILY_CAP; }
+function veng_oh_eff_run_cap() { return $GLOBALS['veng_oh_catchup_overrides']['run_cap'] ?? VENG_OH_RUN_CAP; }
+function veng_oh_eff_world_cap() { return $GLOBALS['veng_oh_catchup_overrides']['world_cap'] ?? VENG_OH_WORLD_DAILY_CAP; }
+function veng_oh_eff_kurdish_min() { return $GLOBALS['veng_oh_catchup_overrides']['kurdish_min'] ?? VENG_OH_KURDISH_DAILY_MIN; }
+function veng_oh_eff_regional_sports_cap() { return $GLOBALS['veng_oh_catchup_overrides']['regional_sports_cap'] ?? VENG_OH_REGIONAL_SPORTS_DAILY_CAP; }
+function veng_oh_eff_items_per_feed() { return $GLOBALS['veng_oh_catchup_overrides']['items_per_feed'] ?? 5; }
+
 function veng_oh_run_import() {
 	// Arka planda (wp-cron) çalışıyor, kullanıcı sayfası bloklamıyor — yavaş kaynaklar
 	// toplamda 30sn'yi geçince PHP'nin varsayılan max_execution_time'ı tüm importu
@@ -1019,7 +1031,7 @@ function veng_oh_run_import() {
 	}
 
 	$hour = (int) current_time( 'G' );
-	if ( $hour < VENG_OH_ACTIVE_HOUR_START || $hour >= VENG_OH_ACTIVE_HOUR_END ) {
+	if ( empty( $GLOBALS['veng_oh_catchup_overrides'] ) && ( $hour < VENG_OH_ACTIVE_HOUR_START || $hour >= VENG_OH_ACTIVE_HOUR_END ) ) {
 		update_option( 'veng_oh_last_run', array(
 			'time'    => current_time( 'mysql' ),
 			'created' => 0,
@@ -1028,7 +1040,7 @@ function veng_oh_run_import() {
 		return 0;
 	}
 
-	$items_per_feed = 5;
+	$items_per_feed = veng_oh_eff_items_per_feed();
 	$lines = array();
 	$daily = veng_oh_get_daily_count();
 
@@ -1075,13 +1087,13 @@ function veng_oh_run_import() {
 		$lines[] = $feed['source'] . '/' . $feed['category'] . ': ' . $feed_candidates . ' aday';
 	}
 
-	$slots = min( VENG_OH_RUN_CAP, VENG_OH_DAILY_CAP - $daily['count'] );
+	$slots = min( veng_oh_eff_run_cap(), veng_oh_eff_daily_cap() - $daily['count'] );
 
 	// Dünya kaynaklarından günlük tavana (VENG_OH_WORLD_DAILY_CAP) ulaşıldıysa, içeriği
 	// gerçekten Kürtlerle ilgili OLMAYAN "world" adayları bu turda hiç değerlendirmeye
 	// alınmaz — sert sınır. (İçerik Kürtlerle ilgiliyse kaynak "dünya" olsa da elenmez,
 	// çünkü o zaten Kürt kotasına sayılır.)
-	if ( $daily['world'] >= VENG_OH_WORLD_DAILY_CAP ) {
+	if ( $daily['world'] >= veng_oh_eff_world_cap() ) {
 		$candidates = array_values( array_filter( $candidates, function ( $c ) {
 			return 'world' !== veng_oh_candidate_region( $c['item'], $c['feed'] );
 		} ) );
@@ -1091,9 +1103,9 @@ function veng_oh_run_import() {
 	// ayrı bir hakla (VENG_OH_REGIONAL_SPORTS_DAILY_CAP) değerlendirilir — ana günlük
 	// sınıra ($slots<=0) ulaşılmış olsa bile bu kısım çalışmaya devam eder.
 	$regional_sports_stories = array();
-	$regional_sports_remaining = VENG_OH_REGIONAL_SPORTS_DAILY_CAP - ( $daily['bolge_spor'] ?? 0 );
+	$regional_sports_remaining = veng_oh_eff_regional_sports_cap() - ( $daily['bolge_spor'] ?? 0 );
 	if ( $regional_sports_remaining > 0 ) {
-		$regional_sports_run_slots = min( VENG_OH_RUN_CAP, $regional_sports_remaining );
+		$regional_sports_run_slots = min( veng_oh_eff_run_cap(), $regional_sports_remaining );
 		$regional_sports_candidates = array_values( array_filter( $candidates, function ( $c ) {
 			return veng_oh_is_regional_sports( $c['item'] );
 		} ) );
@@ -1112,7 +1124,7 @@ function veng_oh_run_import() {
 	}
 
 	if ( $slots <= 0 && empty( $regional_sports_stories ) ) {
-		$lines[] = 'Günlük sınıra (' . VENG_OH_DAILY_CAP . ') ve bölge spor ek sınırına (' . VENG_OH_REGIONAL_SPORTS_DAILY_CAP . ') ulaşıldı, bu çalışmada haber eklenmedi.';
+		$lines[] = 'Günlük sınıra (' . veng_oh_eff_daily_cap() . ') ve bölge spor ek sınırına (' . veng_oh_eff_regional_sports_cap() . ') ulaşıldı, bu çalışmada haber eklenmedi.';
 		update_option( 'veng_oh_last_run', array( 'time' => current_time( 'mysql' ), 'created' => 0, 'lines' => $lines ) );
 		return 0;
 	}
@@ -1156,7 +1168,7 @@ function veng_oh_run_import() {
 	// onlardan seçilir; kalan boşluk geri kalan adaylardan doldurulur.
 	$remaining_slots = $slots - count( $stories );
 	if ( $remaining_slots > 0 ) {
-		if ( $daily['kurdish'] < VENG_OH_KURDISH_DAILY_MIN ) {
+		if ( $daily['kurdish'] < veng_oh_eff_kurdish_min() ) {
 			$kurdish_candidates = array_values( array_filter( $candidates, function ( $c ) {
 				return 'kurdish' === veng_oh_candidate_region( $c['item'], $c['feed'] );
 			} ) );
@@ -1226,6 +1238,56 @@ function veng_oh_run_import() {
 	return $created;
 }
 add_action( 'veng_oh_import_event', 'veng_oh_run_import' );
+
+/**
+ * Toplu yakalama: bir hata/kesinti yüzünden kaybedilen günlerin haberlerini TEK butonla,
+ * normal öncelik kurallarını (Kürt bölgesi asgari, dünya tavanı, bölge spor ek hakkı,
+ * kaynak bazlı asgariler) aynen koruyarak ama günlük sınırları geçici büyüterek telafi
+ * eder. Günlük sayacı sıfırlar, sonra normal veng_oh_run_import()'ı büyütülmüş sınırlarla
+ * art arda çağırır — her çağrı kendi içinde hemen yayınlar (yazı kaybı riski yok), yeni
+ * aday kalmayınca ya da hedefe ulaşınca durur. Zaman aşımına uğrarsa (çok kaynak var)
+ * butona tekrar basmak güvenlidir, kaldığı yerden devam eder (zaten eklenenler atlanır).
+ */
+function veng_oh_run_catchup_import( $target = 137 ) {
+	if ( function_exists( 'set_time_limit' ) ) {
+		@set_time_limit( 0 );
+	}
+
+	delete_option( 'veng_oh_daily_count' );
+
+	$scale = $target / VENG_OH_DAILY_CAP;
+	$GLOBALS['veng_oh_catchup_overrides'] = array(
+		'daily_cap'           => $target,
+		'run_cap'             => $target,
+		'world_cap'           => (int) ceil( VENG_OH_WORLD_DAILY_CAP * $scale ),
+		'kurdish_min'         => (int) ceil( VENG_OH_KURDISH_DAILY_MIN * $scale ),
+		'regional_sports_cap' => (int) ceil( VENG_OH_REGIONAL_SPORTS_DAILY_CAP * $scale ),
+		'items_per_feed'      => 20,
+	);
+
+	$total = 0;
+	$lines_all = array( 'TOPLU YÜKLEME başladı (hedef: ' . $target . ').' );
+	for ( $i = 0; $i < 8; $i++ ) {
+		$created = veng_oh_run_import();
+		$last = get_option( 'veng_oh_last_run' );
+		$lines_all = array_merge( $lines_all, $last['lines'] ?? array() );
+		$total += $created;
+		if ( $created <= 0 || $total >= $target ) {
+			break;
+		}
+	}
+
+	$GLOBALS['veng_oh_catchup_overrides'] = null;
+
+	$lines_all[] = 'TOPLU YÜKLEME bitti: toplam ' . $total . ' haber eklendi.';
+	update_option( 'veng_oh_last_run', array(
+		'time'    => current_time( 'mysql' ),
+		'created' => $total,
+		'lines'   => $lines_all,
+	) );
+
+	return $total;
+}
 
 /**
  * Aday haber listesini "hikâye"lere gruplar — farklı kaynaklardan gelen ama aynı
@@ -1855,6 +1917,11 @@ function veng_oh_settings_page() {
 		echo '<div class="notice notice-success"><p>Günlük sayaç (toplam + bölge dağılımı) sıfırlandı. Bu sadece sayacı sıfırlar, yazı silmez.</p></div>';
 	}
 
+	if ( isset( $_POST['veng_oh_run_catchup'] ) && check_admin_referer( 'veng_oh_settings' ) ) {
+		$catchup_total = veng_oh_run_catchup_import( 137 );
+		echo '<div class="notice notice-success"><p><strong>Toplu yükleme tamamlandı:</strong> ' . intval( $catchup_total ) . ' haber eklendi. Zaman aşımına uğradıysa butona tekrar bas, kaldığı yerden devam eder.</p></div>';
+	}
+
 	if ( isset( $_POST['veng_oh_backfill_alt'] ) && check_admin_referer( 'veng_oh_settings' ) ) {
 		$fixed = veng_oh_backfill_image_alt();
 		echo '<div class="notice notice-success"><p>Görsel alt metni dolduruldu: ' . intval( $fixed ) . ' görsel güncellendi.</p></div>';
@@ -1972,6 +2039,7 @@ function veng_oh_settings_page() {
 				<button type="submit" name="veng_oh_save_settings" class="button button-primary">Ayarları Kaydet</button>
 				<button type="submit" name="veng_oh_run_now" class="button">Şimdi Çalıştır</button>
 				<button type="submit" name="veng_oh_reset_daily_count" class="button" onclick="return confirm('Bugünkü sayaç (toplam + Kürt/Dünya/Diğer dağılımı) sıfırlanacak. Yazı silinmez, sadece sayaç. Emin misin?');">Günlük Sayacı Sıfırla</button>
+				<button type="submit" name="veng_oh_run_catchup" class="button" onclick="return confirm('Kaybedilen haberleri telafi etmek için günlük sınırlar geçici büyütülüp (hedef: 137) tüm kaynaklar taranacak. Birkaç dakika sürebilir, zaman aşımı olursa tekrar basman yeterli. Emin misin?');">Toplu Yükleme (Kayıp Günleri Telafi Et)</button>
 				<button type="submit" name="veng_oh_backfill_alt" class="button">Eski Görsellere Alt Metin Doldur</button>
 				<button type="submit" name="veng_oh_backfill_images" class="button">Eksik Görselleri Tespit Et ve Yükle</button>
 				<button type="submit" name="veng_oh_backfill_attribution" class="button">Kaynak Notunu Sadeleştir</button>
