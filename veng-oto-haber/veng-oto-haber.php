@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.43
+ * Version: 1.0.44
  * Author: Veng Haber
  */
 
@@ -541,7 +541,7 @@ function veng_oh_editorial_rewrite( $item, $source ) {
 		. "- İlk cümlede konunun özünü doğrudan ver (inverted pyramid); dramatik/duygusal sıfatlar, ünlem, abartı kullanma.\n"
 		. "- Hiçbir taraf/kişi/kurum/örgüt lehine veya aleyhine yorum, övgü ya da suçlama içermesin; yalnızca bilinen olguları aktar.\n"
 		. "- İddia/açıklama niteliğindeki ifadeleri \"iddia edildi\", \"açıklandı\", \"belirtildi\" gibi temkinli atıf kalıplarıyla ver, kesin doğru gibi sunma.\n"
-		. "- Uydurma detay, sayı, isim veya alıntı ekleme; yalnızca verilen bilgiyle sınırlı kal, belirsizse genel ifade kullan.\n"
+		. "- Uydurma detay, sayı, isim veya alıntı ekleme; yalnızca verilen bilgiyle sınırlı kal, belirsizse genel ifade kullan. Bağlam/arka plan eklerken de aynı kural geçerli: sadece genel bilinen, tartışmasız arka plan bilgisi (ör. 'X kurumu daha önce de bu konuda açıklama yapmıştı' türünden) ekle, spekülasyon/tahmin/yorum katma.\n"
 		. "- Orijinal metinde geçen sayıları (skor, tarih, miktar, yaş, istatistik vb.) OLDUĞU GİBİ koru — yeniden yazarken yuvarlamaya, değiştirmeye veya yanlış hatırlamaya çalışma, aynen aktar.\n"
 		. veng_oh_sports_hometown_rule()
 		. veng_oh_regional_voice_rule()
@@ -550,12 +550,12 @@ function veng_oh_editorial_rewrite( $item, $source ) {
 		. 'Orijinal başlık: "' . $item['title'] . "\"\n"
 		. 'Orijinal özet: "' . mb_substr( $item['summary'], 0, 600 ) . "\"\n\n"
 		. "Şunu JSON olarak döndür (başka hiçbir şey yazma):\n"
-		. '{"title": "...", "summary": "...", "content_html": "<p>...</p><p>...</p>"}' . "\n"
-		. 'content_html en az 2 paragraf olsun.';
+		. '{"title": "...", "summary": "...", "content_html": "<p>...</p><p>...</p><p>...</p>"}' . "\n"
+		. 'content_html en az 3-4 paragraf olsun — sadece tek cümleyi tekrar etme, konunun bağlamını/önemini de (verilen bilgiyle sınırlı kalarak) açıklayarak detaylandır.';
 
 	$res = veng_oh_call_claude( array(
 		'model'      => 'claude-sonnet-5',
-		'max_tokens' => 2048,
+		'max_tokens' => 3072,
 		'messages'   => array( array( 'role' => 'user', 'content' => $prompt ) ),
 	), 40 );
 
@@ -586,7 +586,7 @@ function veng_oh_editorial_rewrite( $item, $source ) {
 	}
 	// Tek, aşırı yoğun bir cümleden ibaret "makale" (kaynak çok kısaysa olabiliyor) okunurluğu
 	// bozuyor — en az 2 paragraflık gerçek içerik yoksa başarısız say, ham veri yayınlanmasın.
-	if ( mb_strlen( wp_strip_all_tags( $parsed['content_html'] ) ) < 150 ) {
+	if ( mb_strlen( wp_strip_all_tags( $parsed['content_html'] ) ) < 300 ) {
 		return null;
 	}
 	return $parsed;
@@ -616,7 +616,7 @@ function veng_oh_editorial_merge_rewrite( $story ) {
 		. "- İlk cümlede konunun özünü doğrudan ver (inverted pyramid); dramatik/duygusal sıfatlar, ünlem, abartı kullanma.\n"
 		. "- Hiçbir taraf/kişi/kurum/örgüt lehine veya aleyhine yorum, övgü ya da suçlama içermesin; yalnızca bilinen olguları aktar.\n"
 		. "- İddia/açıklama niteliğindeki ifadeleri \"iddia edildi\", \"açıklandı\", \"belirtildi\" gibi temkinli atıf kalıplarıyla ver, kesin doğru gibi sunma.\n"
-		. "- Kaynaklarda GEÇMEYEN hiçbir detay, sayı, isim veya alıntı uydurma; sadece verilen bilgiyle sınırlı kal.\n"
+		. "- Kaynaklarda GEÇMEYEN hiçbir detay, sayı, isim veya alıntı uydurma; sadece verilen bilgiyle sınırlı kal. Bağlam/arka plan eklerken de aynı kural geçerli: sadece genel bilinen, tartışmasız arka plan bilgisi ekle, spekülasyon/tahmin/yorum katma.\n"
 		. "- Kaynaklarda geçen sayıları (skor, tarih, miktar, yaş, istatistik vb.) OLDUĞU GİBİ koru, değiştirme; kaynaklar arasında sayı çelişkisi varsa en güncel/çok tekrarlanan kaynağı esas al.\n"
 		. veng_oh_sports_hometown_rule()
 		. veng_oh_regional_voice_rule()
@@ -624,12 +624,12 @@ function veng_oh_editorial_merge_rewrite( $story ) {
 		. "- Magazinsel/abartılı ifadelerden kaçın, gazetecilik standardına uygun ol.\n\n"
 		. $sources_text . "\n"
 		. "Şunu JSON olarak döndür (başka hiçbir şey yazma):\n"
-		. '{"title": "...", "summary": "...", "content_html": "<p>...</p><p>...</p>"}' . "\n"
-		. 'content_html en az 2 paragraf olsun; başlık ve içerik hiçbir kaynaktaki başlık/cümleyle aynı olmasın.';
+		. '{"title": "...", "summary": "...", "content_html": "<p>...</p><p>...</p><p>...</p>"}' . "\n"
+		. 'content_html en az 3-4 paragraf olsun — tüm kaynaklardaki bilgileri birleştirip detaylandır, sadece tek cümleyi tekrar etme; başlık ve içerik hiçbir kaynaktaki başlık/cümleyle aynı olmasın.';
 
 	$res = veng_oh_call_claude( array(
 		'model'      => 'claude-sonnet-5',
-		'max_tokens' => 2048,
+		'max_tokens' => 3072,
 		'messages'   => array( array( 'role' => 'user', 'content' => $prompt ) ),
 	), 45 );
 
@@ -660,7 +660,7 @@ function veng_oh_editorial_merge_rewrite( $story ) {
 	}
 	// Tek, aşırı yoğun bir cümleden ibaret "makale" (kaynak çok kısaysa olabiliyor) okunurluğu
 	// bozuyor — en az 2 paragraflık gerçek içerik yoksa başarısız say, ham veri yayınlanmasın.
-	if ( mb_strlen( wp_strip_all_tags( $parsed['content_html'] ) ) < 150 ) {
+	if ( mb_strlen( wp_strip_all_tags( $parsed['content_html'] ) ) < 300 ) {
 		return null;
 	}
 	return $parsed;
