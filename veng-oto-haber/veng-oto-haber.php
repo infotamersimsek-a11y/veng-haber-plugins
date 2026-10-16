@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.47
+ * Version: 1.0.48
  * Author: Veng Haber
  */
 
@@ -1240,15 +1240,16 @@ function veng_oh_run_import() {
 add_action( 'veng_oh_import_event', 'veng_oh_run_import' );
 
 /**
- * Toplu yakalama: bir hata/kesinti yüzünden kaybedilen günlerin haberlerini TEK butonla,
- * normal öncelik kurallarını (Kürt bölgesi asgari, dünya tavanı, bölge spor ek hakkı,
- * kaynak bazlı asgariler) aynen koruyarak ama günlük sınırları geçici büyüterek telafi
- * eder. Günlük sayacı sıfırlar, sonra normal veng_oh_run_import()'ı büyütülmüş sınırlarla
- * art arda çağırır — her çağrı kendi içinde hemen yayınlar (yazı kaybı riski yok), yeni
- * aday kalmayınca ya da hedefe ulaşınca durur. Zaman aşımına uğrarsa (çok kaynak var)
- * butona tekrar basmak güvenlidir, kaldığı yerden devam eder (zaten eklenenler atlanır).
+ * Toplu yakalama: bir hata/kesinti yüzünden kaybedilen günlerin haberlerini normal
+ * öncelik kurallarını (Kürt bölgesi asgari, dünya tavanı, bölge spor ek hakkı, kaynak
+ * bazlı asgariler) aynen koruyarak ama o tıklama için günlük sınırları geçici büyüterek
+ * telafi eder. SADECE TEK bir veng_oh_run_import() döngüsü çalıştırır — normal "Şimdi
+ * Çalıştır" ile birebir aynı ağırlıkta, tek fark o anki sınırların büyütülmüş olması.
+ * Önceden art arda birden fazla döngü çalıştırıyordu, bu da Cloudflare/sunucu zaman
+ * aşımına (520 hatası) sebep oluyordu — artık her tıklama tek, hafif, hızlı bir istek;
+ * hedefe ulaşmak için butona birkaç kez basmak gerekir ama her basış güvenli ve hızlı.
  */
-function veng_oh_run_catchup_import( $target = 20 ) {
+function veng_oh_run_catchup_import( $target = 10 ) {
 	if ( function_exists( 'set_time_limit' ) ) {
 		@set_time_limit( 0 );
 	}
@@ -1265,26 +1266,9 @@ function veng_oh_run_catchup_import( $target = 20 ) {
 		'items_per_feed'      => 10,
 	);
 
-	$total = 0;
-	$lines_all = array( 'TOPLU YÜKLEME başladı (hedef: ' . $target . ').' );
-	for ( $i = 0; $i < 5; $i++ ) {
-		$created = veng_oh_run_import();
-		$last = get_option( 'veng_oh_last_run' );
-		$lines_all = array_merge( $lines_all, $last['lines'] ?? array() );
-		$total += $created;
-		if ( $created <= 0 || $total >= $target ) {
-			break;
-		}
-	}
+	$total = veng_oh_run_import();
 
 	$GLOBALS['veng_oh_catchup_overrides'] = null;
-
-	$lines_all[] = 'TOPLU YÜKLEME bitti: toplam ' . $total . ' haber eklendi.';
-	update_option( 'veng_oh_last_run', array(
-		'time'    => current_time( 'mysql' ),
-		'created' => $total,
-		'lines'   => $lines_all,
-	) );
 
 	return $total;
 }
@@ -1918,8 +1902,8 @@ function veng_oh_settings_page() {
 	}
 
 	if ( isset( $_POST['veng_oh_run_catchup'] ) && check_admin_referer( 'veng_oh_settings' ) ) {
-		$catchup_total = veng_oh_run_catchup_import( 20 );
-		echo '<div class="notice notice-success"><p><strong>Toplu yükleme tamamlandı:</strong> ' . intval( $catchup_total ) . ' haber eklendi (bu tur en fazla 20). Daha fazla kayıp haber varsa butona tekrar bas, kaldığı yerden devam eder — sunucuyu yormamak için her basışta 20&#039;şer 20&#039;şer yüklenir.</p></div>';
+		$catchup_total = veng_oh_run_catchup_import( 10 );
+		echo '<div class="notice notice-success"><p><strong>Toplu yükleme tamamlandı:</strong> ' . intval( $catchup_total ) . ' haber eklendi (bu tur en fazla 10, tek hafif istek). Daha fazla kayıp haber varsa butona tekrar bas.</p></div>';
 	}
 
 	if ( isset( $_POST['veng_oh_backfill_alt'] ) && check_admin_referer( 'veng_oh_settings' ) ) {
@@ -2039,7 +2023,7 @@ function veng_oh_settings_page() {
 				<button type="submit" name="veng_oh_save_settings" class="button button-primary">Ayarları Kaydet</button>
 				<button type="submit" name="veng_oh_run_now" class="button">Şimdi Çalıştır</button>
 				<button type="submit" name="veng_oh_reset_daily_count" class="button" onclick="return confirm('Bugünkü sayaç (toplam + Kürt/Dünya/Diğer dağılımı) sıfırlanacak. Yazı silinmez, sadece sayaç. Emin misin?');">Günlük Sayacı Sıfırla</button>
-				<button type="submit" name="veng_oh_run_catchup" class="button" onclick="return confirm('Kaybedilen haberleri telafi etmek için bu tur en fazla 20 haber yüklenecek (sunucuyu yormamak için). Daha fazlası gerekirse butona tekrar basarsın. Emin misin?');">Toplu Yükleme (20&#039;şer 20&#039;şer, Kayıp Günleri Telafi Et)</button>
+				<button type="submit" name="veng_oh_run_catchup" class="button" onclick="return confirm('Kaybedilen haberleri telafi etmek için bu tur en fazla 10 haber yüklenecek, tek hafif istek (normal Şimdi Çalıştır kadar hızlı). Daha fazlası gerekirse butona tekrar basarsın. Emin misin?');">Toplu Yükleme (10&#039;ar 10&#039;ar, Kayıp Günleri Telafi Et)</button>
 				<button type="submit" name="veng_oh_backfill_alt" class="button">Eski Görsellere Alt Metin Doldur</button>
 				<button type="submit" name="veng_oh_backfill_images" class="button">Eksik Görselleri Tespit Et ve Yükle</button>
 				<button type="submit" name="veng_oh_backfill_attribution" class="button">Kaynak Notunu Sadeleştir</button>
