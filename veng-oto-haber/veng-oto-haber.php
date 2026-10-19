@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.49
+ * Version: 1.0.50
  * Author: Veng Haber
  */
 
@@ -460,60 +460,17 @@ function veng_oh_place_name_rule() {
 	return "- İL ADI KURALI (KESİN, İSTİSNASIZ): Şu il adlarını metinde ve başlıkta HER ZAMAN kısa/yerel adlarıyla yaz, resmi uzun adlarını ASLA kullanma: Kahramanmaraş değil 'Maraş', Gaziantep değil 'Antep', Şanlıurfa değil 'Urfa'. Bu, il adının TEK BAŞINA geçtiği her yerde değil, başka bir kelimeyle BİRLEŞİK geçtiği her yerde de geçerlidir — ör. kulüp/kurum/takım adları: 'Şanlıurfaspor' değil 'Urfaspor', 'Gaziantepspor' değil 'Antepspor', 'Kahramanmaraşspor' değil 'Maraşspor'. 'Şanlı', 'Gazi', 'Kahraman' gibi önekler hiçbir biçimde, hiçbir kelimenin içinde bile kullanılmaz. Bu kural her türlü haberde geçerlidir, hiçbir durumda bozulmaz.\n";
 }
 
-/** Resmi Anthropic key'i veya relay (yedek) servisinden en az biri tanımlı mı. */
+/** Resmi Anthropic key'i tanımlı mı. */
 function veng_oh_claude_available() {
-	$relay_url = trim( get_option( 'veng_oh_relay_base_url', '' ) );
-	$relay_key = trim( get_option( 'veng_oh_relay_api_key', '' ) );
-	return (bool) ( get_option( 'veng_oh_anthropic_api_key' ) || ( $relay_url && $relay_key ) );
+	return (bool) get_option( 'veng_oh_anthropic_api_key' );
 }
 
-/**
- * Claude API'sine tek merkezden istek atar. Relay (3. parti proxy) ayarlıysa ÖNCE onu
- * dener — relay hata verir/kapanırsa (timeout, 5xx, bağlantı hatası) otomatik olarak
- * resmi Anthropic key'ine düşer, sistem kesintisiz devam eder. Relay ayarlı değilse
- * doğrudan resmi key kullanılır (önceki davranışla birebir aynı).
- */
+/** Claude API'sine tek merkezden istek atar. */
 function veng_oh_call_claude( $body, $timeout = 40 ) {
-	global $veng_oh_relay_stats;
-
-	$relay_url    = trim( get_option( 'veng_oh_relay_base_url', '' ) );
-	$relay_key    = trim( get_option( 'veng_oh_relay_api_key', '' ) );
 	$official_key = get_option( 'veng_oh_anthropic_api_key' );
 
-	if ( $relay_url && $relay_key ) {
-		$endpoint = rtrim( $relay_url, '/' );
-		if ( ! preg_match( '#/v1/messages$#', $endpoint ) ) {
-			$endpoint .= '/v1/messages';
-		}
-		$res = wp_remote_post( $endpoint, array(
-			'timeout' => $timeout,
-			'headers' => array(
-				'content-type'      => 'application/json',
-				'x-api-key'         => $relay_key,
-				'anthropic-version' => '2023-06-01',
-			),
-			'body'    => wp_json_encode( $body ),
-		) );
-		if ( ! is_wp_error( $res ) && 200 === wp_remote_retrieve_response_code( $res ) ) {
-			if ( isset( $veng_oh_relay_stats ) ) {
-				$veng_oh_relay_stats['relay_ok']++;
-			}
-			return $res;
-		}
-		$reason = is_wp_error( $res ) ? $res->get_error_message() : wp_remote_retrieve_response_code( $res ) . ': ' . mb_substr( wp_remote_retrieve_body( $res ), 0, 200 );
-		veng_oh_log( 'Relay API başarısız (' . $reason . '), resmi Anthropic key\'ine düşülüyor.' );
-		if ( isset( $veng_oh_relay_stats ) ) {
-			$veng_oh_relay_stats['relay_fail']++;
-			$veng_oh_relay_stats['last_error'] = $reason;
-		}
-	}
-
 	if ( ! $official_key ) {
-		return new WP_Error( 'veng_oh_no_key', 'Ne relay ne resmi API anahtarı tanımlı.' );
-	}
-
-	if ( isset( $veng_oh_relay_stats ) ) {
-		$veng_oh_relay_stats['official_used']++;
+		return new WP_Error( 'veng_oh_no_key', 'API anahtarı tanımlı değil.' );
 	}
 
 	return wp_remote_post( 'https://api.anthropic.com/v1/messages', array(
@@ -819,7 +776,7 @@ function veng_oh_import_story( $story ) {
 
 	$attribution = '<p><em>Güncel Haber Kaynak: ' . esc_html( $sources_label ) . '</em></p>';
 
-	// Yeniden yazma başarısız olduysa (API hatası, relay sorunu vb.) ham/kırpılmış kaynak
+	// Yeniden yazma başarısız olduysa (API hatası vb.) ham/kırpılmış kaynak
 	// metni (ör. sadece fotoğraf altyazısı) canlıya çıkmasın — otomatik yayın açık olsa
 	// bile taslak kalır, editör elle kontrol edip yayınlar.
 	$status = ( $draft && get_option( 'veng_oh_auto_publish', '1' ) === '1' ) ? 'publish' : 'draft';
@@ -920,71 +877,6 @@ function veng_oh_backfill_attribution() {
 	return $fixed;
 }
 
-/** Öne çıkan görseli olmayan otomatik-çekilmiş haberleri kaynak makale linkinden (og:image) yeniden dener. */
-function veng_oh_backfill_missing_images() {
-	if ( function_exists( 'set_time_limit' ) ) {
-		@set_time_limit( 0 );
-	}
-	$fixed = 0;
-	$failed = 0;
-	$posts = get_posts( array(
-		'post_type'      => array( 'post', 'makale' ),
-		'post_status'    => 'publish',
-		'posts_per_page' => -1,
-		'meta_key'       => '_veng_source_name',
-		'fields'         => 'ids',
-	) );
-	foreach ( $posts as $post_id ) {
-		if ( has_post_thumbnail( $post_id ) ) {
-			continue;
-		}
-		$source_url = get_post_meta( $post_id, '_veng_source_url', true );
-		if ( ! $source_url ) {
-			continue;
-		}
-		$og = veng_oh_fetch_og_meta( $source_url );
-		if ( empty( $og['image'] ) ) {
-			$failed++;
-			continue;
-		}
-		veng_oh_set_featured_image( $post_id, $og['image'], get_the_title( $post_id ) );
-		if ( has_post_thumbnail( $post_id ) ) {
-			$fixed++;
-		} else {
-			$failed++;
-		}
-	}
-	return array( 'fixed' => $fixed, 'failed' => $failed );
-}
-
-/** Alt metni boş olan, otomatik çekilmiş haberlerin öne çıkan görsellerini haber başlığıyla doldurur. */
-function veng_oh_backfill_image_alt() {
-	if ( function_exists( 'set_time_limit' ) ) {
-		@set_time_limit( 0 );
-	}
-	$fixed = 0;
-	$posts = get_posts( array(
-		'post_type'      => array( 'post', 'makale' ),
-		'post_status'    => 'publish',
-		'posts_per_page' => -1,
-		'meta_key'       => '_veng_source_name',
-		'fields'         => 'ids',
-	) );
-	foreach ( $posts as $post_id ) {
-		$thumb_id = get_post_thumbnail_id( $post_id );
-		if ( ! $thumb_id ) {
-			continue;
-		}
-		$alt = get_post_meta( $thumb_id, '_wp_attachment_image_alt', true );
-		if ( '' !== trim( (string) $alt ) ) {
-			continue;
-		}
-		update_post_meta( $thumb_id, '_wp_attachment_image_alt', sanitize_text_field( get_the_title( $post_id ) ) );
-		$fixed++;
-	}
-	return $fixed;
-}
-
 function veng_oh_log( $msg ) {
 	error_log( '[VengOtoHaber] ' . $msg );
 }
@@ -1010,18 +902,6 @@ function veng_oh_get_daily_count() {
 	return $data;
 }
 
-/**
- * Toplu yakalama (catch-up) çalışması sırasında günlük sınırları geçici olarak büyütmek
- * için — normal saatlik çalışmada bu hep boştur, sabitler (VENG_OH_*) aynen kullanılır.
- * bkz. veng_oh_run_catchup_import().
- */
-function veng_oh_eff_daily_cap() { return $GLOBALS['veng_oh_catchup_overrides']['daily_cap'] ?? VENG_OH_DAILY_CAP; }
-function veng_oh_eff_run_cap() { return $GLOBALS['veng_oh_catchup_overrides']['run_cap'] ?? VENG_OH_RUN_CAP; }
-function veng_oh_eff_world_cap() { return $GLOBALS['veng_oh_catchup_overrides']['world_cap'] ?? VENG_OH_WORLD_DAILY_CAP; }
-function veng_oh_eff_kurdish_min() { return $GLOBALS['veng_oh_catchup_overrides']['kurdish_min'] ?? VENG_OH_KURDISH_DAILY_MIN; }
-function veng_oh_eff_regional_sports_cap() { return $GLOBALS['veng_oh_catchup_overrides']['regional_sports_cap'] ?? VENG_OH_REGIONAL_SPORTS_DAILY_CAP; }
-function veng_oh_eff_items_per_feed() { return $GLOBALS['veng_oh_catchup_overrides']['items_per_feed'] ?? 5; }
-
 function veng_oh_run_import() {
 	// Arka planda (wp-cron) çalışıyor, kullanıcı sayfası bloklamıyor — yavaş kaynaklar
 	// toplamda 30sn'yi geçince PHP'nin varsayılan max_execution_time'ı tüm importu
@@ -1031,7 +911,7 @@ function veng_oh_run_import() {
 	}
 
 	$hour = (int) current_time( 'G' );
-	if ( empty( $GLOBALS['veng_oh_catchup_overrides'] ) && ( $hour < VENG_OH_ACTIVE_HOUR_START || $hour >= VENG_OH_ACTIVE_HOUR_END ) ) {
+	if ( $hour < VENG_OH_ACTIVE_HOUR_START || $hour >= VENG_OH_ACTIVE_HOUR_END ) {
 		update_option( 'veng_oh_last_run', array(
 			'time'    => current_time( 'mysql' ),
 			'created' => 0,
@@ -1040,15 +920,9 @@ function veng_oh_run_import() {
 		return 0;
 	}
 
-	$items_per_feed = veng_oh_eff_items_per_feed();
+	$items_per_feed = 5;
 	$lines = array();
 	$daily = veng_oh_get_daily_count();
-
-	// Relay (3. parti proxy) gerçekten çalışıyor mu, yoksa sessizce resmi key'e mi
-	// düşüyor — bu bilgi sadece PHP error_log'a yazılıyordu (bkz. veng_oh_log), admin
-	// sayfasından görünmüyordu. Bu sayaç Durum kutusunda görünür hale getirmek için.
-	global $veng_oh_relay_stats;
-	$veng_oh_relay_stats = array( 'relay_ok' => 0, 'relay_fail' => 0, 'official_used' => 0 );
 
 	// 1. Aşama: tüm kaynaklardan henüz eklenmemiş aday haberleri topla (hiçbirini
 	// henüz yazmadan) — böylece hangisinin önemli olduğuna, sadece ilk bulunana
@@ -1087,13 +961,13 @@ function veng_oh_run_import() {
 		$lines[] = $feed['source'] . '/' . $feed['category'] . ': ' . $feed_candidates . ' aday';
 	}
 
-	$slots = min( veng_oh_eff_run_cap(), veng_oh_eff_daily_cap() - $daily['count'] );
+	$slots = min( VENG_OH_RUN_CAP, VENG_OH_DAILY_CAP - $daily['count'] );
 
 	// Dünya kaynaklarından günlük tavana (VENG_OH_WORLD_DAILY_CAP) ulaşıldıysa, içeriği
 	// gerçekten Kürtlerle ilgili OLMAYAN "world" adayları bu turda hiç değerlendirmeye
 	// alınmaz — sert sınır. (İçerik Kürtlerle ilgiliyse kaynak "dünya" olsa da elenmez,
 	// çünkü o zaten Kürt kotasına sayılır.)
-	if ( $daily['world'] >= veng_oh_eff_world_cap() ) {
+	if ( $daily['world'] >= VENG_OH_WORLD_DAILY_CAP ) {
 		$candidates = array_values( array_filter( $candidates, function ( $c ) {
 			return 'world' !== veng_oh_candidate_region( $c['item'], $c['feed'] );
 		} ) );
@@ -1103,9 +977,9 @@ function veng_oh_run_import() {
 	// ayrı bir hakla (VENG_OH_REGIONAL_SPORTS_DAILY_CAP) değerlendirilir — ana günlük
 	// sınıra ($slots<=0) ulaşılmış olsa bile bu kısım çalışmaya devam eder.
 	$regional_sports_stories = array();
-	$regional_sports_remaining = veng_oh_eff_regional_sports_cap() - ( $daily['bolge_spor'] ?? 0 );
+	$regional_sports_remaining = VENG_OH_REGIONAL_SPORTS_DAILY_CAP - ( $daily['bolge_spor'] ?? 0 );
 	if ( $regional_sports_remaining > 0 ) {
-		$regional_sports_run_slots = min( veng_oh_eff_run_cap(), $regional_sports_remaining );
+		$regional_sports_run_slots = min( VENG_OH_RUN_CAP, $regional_sports_remaining );
 		$regional_sports_candidates = array_values( array_filter( $candidates, function ( $c ) {
 			return veng_oh_is_regional_sports( $c['item'] );
 		} ) );
@@ -1124,7 +998,7 @@ function veng_oh_run_import() {
 	}
 
 	if ( $slots <= 0 && empty( $regional_sports_stories ) ) {
-		$lines[] = 'Günlük sınıra (' . veng_oh_eff_daily_cap() . ') ve bölge spor ek sınırına (' . veng_oh_eff_regional_sports_cap() . ') ulaşıldı, bu çalışmada haber eklenmedi.';
+		$lines[] = 'Günlük sınıra (' . VENG_OH_DAILY_CAP . ') ve bölge spor ek sınırına (' . VENG_OH_REGIONAL_SPORTS_DAILY_CAP . ') ulaşıldı, bu çalışmada haber eklenmedi.';
 		update_option( 'veng_oh_last_run', array( 'time' => current_time( 'mysql' ), 'created' => 0, 'lines' => $lines ) );
 		return 0;
 	}
@@ -1168,7 +1042,7 @@ function veng_oh_run_import() {
 	// onlardan seçilir; kalan boşluk geri kalan adaylardan doldurulur.
 	$remaining_slots = $slots - count( $stories );
 	if ( $remaining_slots > 0 ) {
-		if ( $daily['kurdish'] < veng_oh_eff_kurdish_min() ) {
+		if ( $daily['kurdish'] < VENG_OH_KURDISH_DAILY_MIN ) {
 			$kurdish_candidates = array_values( array_filter( $candidates, function ( $c ) {
 				return 'kurdish' === veng_oh_candidate_region( $c['item'], $c['feed'] );
 			} ) );
@@ -1220,15 +1094,6 @@ function veng_oh_run_import() {
 
 	update_option( 'veng_oh_daily_count', $daily );
 
-	global $veng_oh_relay_stats;
-	if ( trim( get_option( 'veng_oh_relay_base_url', '' ) ) ) {
-		$relay_line = 'Relay API: ' . $veng_oh_relay_stats['relay_ok'] . ' başarılı, ' . $veng_oh_relay_stats['relay_fail'] . ' başarısız (resmi key\'e düşüldü), ' . $veng_oh_relay_stats['official_used'] . ' kez resmi key direkt kullanıldı.';
-		if ( $veng_oh_relay_stats['relay_fail'] > 0 && ! empty( $veng_oh_relay_stats['last_error'] ) ) {
-			$relay_line .= ' Son hata: ' . $veng_oh_relay_stats['last_error'];
-		}
-		$lines[] = $relay_line;
-	}
-
 	update_option( 'veng_oh_last_run', array(
 		'time'    => current_time( 'mysql' ),
 		'created' => $created,
@@ -1238,44 +1103,6 @@ function veng_oh_run_import() {
 	return $created;
 }
 add_action( 'veng_oh_import_event', 'veng_oh_run_import' );
-
-/**
- * Toplu yakalama: bir hata/kesinti yüzünden kaybedilen günlerin haberlerini normal
- * öncelik kurallarını (Kürt bölgesi asgari, dünya tavanı, bölge spor ek hakkı, kaynak
- * bazlı asgariler) aynen koruyarak ama o tıklama için günlük sınırları geçici büyüterek
- * telafi eder. SADECE TEK bir veng_oh_run_import() döngüsü çalıştırır — normal "Şimdi
- * Çalıştır" ile birebir aynı ağırlıkta, tek fark o anki sınırların büyütülmüş olması.
- * Önceden art arda birden fazla döngü çalıştırıyordu, bu da Cloudflare/sunucu zaman
- * aşımına (520 hatası) sebep oluyordu — artık her tıklama tek, hafif, hızlı bir istek;
- * hedefe ulaşmak için butona birkaç kez basmak gerekir ama her basış güvenli ve hızlı.
- */
-function veng_oh_run_catchup_import( $target = 10 ) {
-	if ( function_exists( 'set_time_limit' ) ) {
-		@set_time_limit( 0 );
-	}
-
-	delete_option( 'veng_oh_daily_count' );
-
-	// Asıl darboğaz besleme (RSS) sayısı değil, slot başına bir Claude API çağrısı —
-	// run_cap küçük tutulmazsa (örn. 10 slot = 10 ardışık AI isteği) tek istek yine
-	// sunucu/Cloudflare zaman aşımına (520) takılıyor. run_cap SABİT küçük (3) kalır,
-	// daily_cap (o günün toplam hedefi) ayrı büyür — böylece her tıklama hızlı kalır.
-	$scale = $target / VENG_OH_DAILY_CAP;
-	$GLOBALS['veng_oh_catchup_overrides'] = array(
-		'daily_cap'           => $target,
-		'run_cap'             => min( 3, $target ),
-		'world_cap'           => (int) ceil( VENG_OH_WORLD_DAILY_CAP * $scale ),
-		'kurdish_min'         => (int) ceil( VENG_OH_KURDISH_DAILY_MIN * $scale ),
-		'regional_sports_cap' => (int) ceil( VENG_OH_REGIONAL_SPORTS_DAILY_CAP * $scale ),
-		'items_per_feed'      => 10,
-	);
-
-	$total = veng_oh_run_import();
-
-	$GLOBALS['veng_oh_catchup_overrides'] = null;
-
-	return $total;
-}
 
 /**
  * Aday haber listesini "hikâye"lere gruplar — farklı kaynaklardan gelen ama aynı
@@ -1770,42 +1597,6 @@ function veng_oh_trigger_fresh_restart() {
 }
 add_action( 'plugins_loaded', 'veng_oh_trigger_fresh_restart', 5 );
 
-/**
- * Otomatik çekilen haberler toplamı belli bir sayıyı geçmesin diye en eskilerini siler.
- * SADECE '_veng_source_name' meta'sı olan (yani otomatik çekilmiş) yazılara dokunur —
- * elle yazılmış haberler asla silinmez. Toplu SQL kullanır (veng_oh_bulk_delete_posts),
- * tek seferde en fazla $batch_size siler (sunucuyu boğmamak için).
- */
-function veng_oh_enforce_post_cap( $max_posts = 3000, $batch_size = 200 ) {
-	if ( function_exists( 'set_time_limit' ) ) {
-		@set_time_limit( 0 );
-	}
-	global $wpdb;
-	$total = (int) $wpdb->get_var( $wpdb->prepare(
-		"SELECT COUNT(*) FROM {$wpdb->posts} p
-		 INNER JOIN {$wpdb->postmeta} m ON m.post_id = p.ID AND m.meta_key = %s
-		 WHERE p.post_type IN ('post','makale') AND p.post_status = 'publish'",
-		'_veng_source_name'
-	) );
-	if ( $total <= $max_posts ) {
-		return 0;
-	}
-	$to_delete = min( $batch_size, $total - $max_posts );
-
-	$ids = get_posts( array(
-		'post_type'      => array( 'post', 'makale' ),
-		'post_status'    => 'publish',
-		'posts_per_page' => $to_delete,
-		'meta_key'       => '_veng_source_name',
-		'orderby'        => 'date',
-		'order'          => 'ASC',
-		'fields'         => 'ids',
-	) );
-	$result = veng_oh_bulk_delete_posts( $ids );
-	veng_oh_log( "Otomatik haber sınırı ({$max_posts}) aşılmıştı, {$total} kayıttan " . $result['posts'] . ' en eski otomatik haber silindi.' );
-	return $result['posts'];
-}
-
 function veng_oh_activate() {
 	if ( ! wp_next_scheduled( 'veng_oh_import_event' ) ) {
 		// Zamanı "şimdi" vermek ilk taramayı hemen "vadesi geldi" yapar — senkron çalıştırmaya
@@ -1883,10 +1674,6 @@ function veng_oh_settings_page() {
 
 	if ( isset( $_POST['veng_oh_save_settings'] ) && check_admin_referer( 'veng_oh_settings' ) ) {
 		update_option( 'veng_oh_anthropic_api_key', sanitize_text_field( wp_unslash( $_POST['veng_oh_anthropic_api_key'] ?? '' ) ) );
-		// Relay (3. parti proxy, yedek): ayarlıysa ÖNCE denenir, hata verirse resmi key'e
-		// otomatik düşülür — bkz. veng_oh_call_claude(). Boş bırakılırsa sadece resmi key kullanılır.
-		update_option( 'veng_oh_relay_base_url', esc_url_raw( wp_unslash( $_POST['veng_oh_relay_base_url'] ?? '' ) ) );
-		update_option( 'veng_oh_relay_api_key', sanitize_text_field( wp_unslash( $_POST['veng_oh_relay_api_key'] ?? '' ) ) );
 		update_option( 'veng_oh_auto_publish', isset( $_POST['veng_oh_auto_publish'] ) ? '1' : '0' );
 		// Mezopotamya Ajansı sık sık engellenip alan adı değiştiriyor — otomatik takip
 		// mekanizması bilinçli kurulmadı (mahkeme kararlarını atlatmak olurdu), onun yerine
@@ -1905,31 +1692,9 @@ function veng_oh_settings_page() {
 		echo '<div class="notice notice-success"><p>Günlük sayaç (toplam + bölge dağılımı) sıfırlandı. Bu sadece sayacı sıfırlar, yazı silmez.</p></div>';
 	}
 
-	if ( isset( $_POST['veng_oh_run_catchup'] ) && check_admin_referer( 'veng_oh_settings' ) ) {
-		$catchup_total = veng_oh_run_catchup_import( 10 );
-		echo '<div class="notice notice-success"><p><strong>Toplu yükleme tamamlandı:</strong> ' . intval( $catchup_total ) . ' haber eklendi (bu tur en fazla 3, tek hafif istek — sunucu zaman aşımına düşmesin diye kasıtlı küçük). Daha fazla kayıp haber varsa butona tekrar bas.</p></div>';
-	}
-
-	if ( isset( $_POST['veng_oh_backfill_alt'] ) && check_admin_referer( 'veng_oh_settings' ) ) {
-		$fixed = veng_oh_backfill_image_alt();
-		echo '<div class="notice notice-success"><p>Görsel alt metni dolduruldu: ' . intval( $fixed ) . ' görsel güncellendi.</p></div>';
-	}
-
-	if ( isset( $_POST['veng_oh_backfill_images'] ) && check_admin_referer( 'veng_oh_settings' ) ) {
-		$r = veng_oh_backfill_missing_images();
-		echo '<div class="notice notice-success"><p>Eksik görsel taraması tamamlandı: ' . intval( $r['fixed'] ) . ' görsel yüklendi, ' . intval( $r['failed'] ) . ' haberde kaynak sayfasında da görsel bulunamadı.</p></div>';
-	}
-
 	if ( isset( $_POST['veng_oh_backfill_attribution'] ) && check_admin_referer( 'veng_oh_settings' ) ) {
 		$fixed = veng_oh_backfill_attribution();
 		echo '<div class="notice notice-success"><p>Kaynak notu güncellendi: ' . intval( $fixed ) . ' haberde sadeleştirildi.</p></div>';
-	}
-
-	if ( isset( $_POST['veng_oh_enforce_cap'] ) && check_admin_referer( 'veng_oh_settings' ) ) {
-		// Elle tetiklenen temizlik — sınırsız (0'a kadar), toplu SQL kullanıyor ama yine de
-		// tek istekte 200'le sınırlı, hâlâ otomatik haber varsa butona tekrar basman yeterli.
-		$deleted = veng_oh_enforce_post_cap( 0, 200 );
-		echo '<div class="notice notice-success"><p>' . intval( $deleted ) . ' otomatik haber silindi. Hâlâ otomatik haber kaldıysa butona tekrar bas.</p></div>';
 	}
 
 	if ( isset( $_POST['veng_oh_delete_orphaned_media'] ) && check_admin_referer( 'veng_oh_settings' ) ) {
@@ -1952,8 +1717,6 @@ function veng_oh_settings_page() {
 	}
 
 	$api_key = get_option( 'veng_oh_anthropic_api_key', '' );
-	$relay_base_url = get_option( 'veng_oh_relay_base_url', '' );
-	$relay_api_key = get_option( 'veng_oh_relay_api_key', '' );
 	$auto_publish = get_option( 'veng_oh_auto_publish', '1' ) === '1';
 	$last = get_option( 'veng_oh_last_run' );
 	$next_cron = wp_next_scheduled( 'veng_oh_import_event' );
@@ -1993,20 +1756,7 @@ function veng_oh_settings_page() {
 						<?php else : ?>
 							<span style="color:#991b1b;font-weight:700;">✗ Kayıtlı değil — haberler yeniden yazılmadan, ham özetle ekleniyor!</span>
 						<?php endif; ?>
-						<p class="description">Boşsa haberler yeniden yazılmadan, kaynak özetiyle eklenir. Bu, relay hata verirse otomatik düşülen YEDEK key'dir — aşağıdaki relay boşsa doğrudan bu kullanılır.</p>
-					</td>
-				</tr>
-				<tr>
-					<th><label for="veng_oh_relay_base_url">Relay API Adresi (opsiyonel, öncelikli)</label></th>
-					<td>
-						<input type="text" id="veng_oh_relay_base_url" name="veng_oh_relay_base_url" value="<?php echo esc_attr( $relay_base_url ); ?>" class="regular-text" placeholder="https://..." />
-						<p class="description">Ayarlıysa ÖNCE bu denenir; relay hata verir/kapanırsa sistem otomatik olarak yukarıdaki resmi Anthropic key'ine düşer, kesinti olmaz. Boş bırakılırsa relay hiç kullanılmaz.</p>
-					</td>
-				</tr>
-				<tr>
-					<th><label for="veng_oh_relay_api_key">Relay API Anahtarı</label></th>
-					<td>
-						<input type="text" id="veng_oh_relay_api_key" name="veng_oh_relay_api_key" value="<?php echo esc_attr( $relay_api_key ); ?>" class="regular-text" />
+						<p class="description">Boşsa haberler yeniden yazılmadan, kaynak özetiyle eklenir.</p>
 					</td>
 				</tr>
 				<tr>
@@ -2027,11 +1777,7 @@ function veng_oh_settings_page() {
 				<button type="submit" name="veng_oh_save_settings" class="button button-primary">Ayarları Kaydet</button>
 				<button type="submit" name="veng_oh_run_now" class="button">Şimdi Çalıştır</button>
 				<button type="submit" name="veng_oh_reset_daily_count" class="button" onclick="return confirm('Bugünkü sayaç (toplam + Kürt/Dünya/Diğer dağılımı) sıfırlanacak. Yazı silinmez, sadece sayaç. Emin misin?');">Günlük Sayacı Sıfırla</button>
-				<button type="submit" name="veng_oh_run_catchup" class="button" onclick="return confirm('Kaybedilen haberleri telafi etmek için bu tur en fazla 3 haber yüklenecek (sunucu zaman aşımı yaşanmasın diye kasıtlı küçük tutuldu). Hedefe ulaşmak için birkaç kez basman gerekir. Emin misin?');">Toplu Yükleme (3&#039;er 3&#039;er, Kayıp Günleri Telafi Et)</button>
-				<button type="submit" name="veng_oh_backfill_alt" class="button">Eski Görsellere Alt Metin Doldur</button>
-				<button type="submit" name="veng_oh_backfill_images" class="button">Eksik Görselleri Tespit Et ve Yükle</button>
 				<button type="submit" name="veng_oh_backfill_attribution" class="button">Kaynak Notunu Sadeleştir</button>
-				<button type="submit" name="veng_oh_enforce_cap" class="button">Tüm Otomatik Haberleri Şimdi Sil</button>
 				<?php $orphans = veng_oh_count_orphaned_media_cached(); ?>
 				<?php if ( $orphans['count'] > 0 ) : ?>
 					<button type="submit" name="veng_oh_delete_orphaned_media" class="button" onclick="return confirm('<?php echo esc_js( number_format_i18n( $orphans['count'] ) ); ?> sahipsiz görsel (yaklaşık <?php echo esc_js( size_format( $orphans['bytes'] ) ); ?>) kalıcı olarak silinecek. Emin misin?' );">Sahipsiz Görselleri Sil (<?php echo esc_html( number_format_i18n( $orphans['count'] ) ); ?>, ~<?php echo esc_html( size_format( $orphans['bytes'] ) ); ?>)</button>
@@ -2042,10 +1788,10 @@ function veng_oh_settings_page() {
 				<?php endif; ?>
 			</p>
 		</form>
-		<p class="description">"Eski Görsellere Alt Metin Doldur": geçmiş bir hata yüzünden otomatik çekilen haberlerin görsellerinde alt metin (SEO/erişilebilirlik için) hiç ayarlanmıyordu. Bu düzeltildi, yeni haberler otomatik alt metinle geliyor — bu buton geçmiş haberleri de tek seferde doldurur.<br>"Eksik Görselleri Tespit Et ve Yükle": öne çıkan görseli hiç olmayan otomatik haberleri bulur, kaynak makale linkine tekrar gidip görseli indirmeyi dener.<br>"Kaynak Notunu Sadeleştir": eski "...habere git" linkli kaynak notunu sade "Güncel Haber Kaynak: X" ile değiştirir.<br>"Tüm Otomatik Haberleri Şimdi Sil": sınır yok, botun çektiği tüm haberleri siler (en eskiden başlayarak) — elle yazdığın haberlere hiç dokunmaz, sadece <code>_veng_source_name</code> meta'sı olanlara (yani botun eklediklerine) bakar.<br>"Sahipsiz Görselleri Sil": hiçbir yazının öne çıkan görseli olmayan VE var olan bir yazıya bağlı olmayan görselleri siler (logo/site ikonu korunur) — sayı sıfırsa buton görünmez.</p>
+		<p class="description">"Kaynak Notunu Sadeleştir": eski "...habere git" linkli kaynak notunu sade "Güncel Haber Kaynak: X" ile değiştirir.<br>"Sahipsiz Görselleri Sil": hiçbir yazının öne çıkan görseli olmayan VE var olan bir yazıya bağlı olmayan görselleri siler (logo/site ikonu korunur) — sayı sıfırsa buton görünmez.</p>
 
 		<h2>Durum</h2>
-		<p><strong>Toplam otomatik haber:</strong> <?php echo esc_html( number_format_i18n( $auto_post_count ) ); ?> (sınır yok — fazlaysa "Tüm Otomatik Haberleri Şimdi Sil" ile elle temizleyebilirsin)</p>
+		<p><strong>Toplam otomatik haber:</strong> <?php echo esc_html( number_format_i18n( $auto_post_count ) ); ?></p>
 		<p><strong>Bugün eklenen:</strong> <?php echo esc_html( number_format_i18n( $daily_count['count'] ) ); ?> / <?php echo esc_html( number_format_i18n( VENG_OH_DAILY_CAP ) ); ?> (sunucuyu yormamak için günlük sınır, gece yarısı sıfırlanır)</p>
 		<p><strong>Bugün bölge dağılımı:</strong> Kürt bölgesi <?php echo esc_html( number_format_i18n( $daily_count['kurdish'] ) ); ?> (hedef: en az <?php echo esc_html( number_format_i18n( VENG_OH_KURDISH_DAILY_MIN ) ); ?>) · Dünya <?php echo esc_html( number_format_i18n( $daily_count['world'] ) ); ?> / <?php echo esc_html( number_format_i18n( VENG_OH_WORLD_DAILY_CAP ) ); ?> (tavan) · Diğer <?php echo esc_html( number_format_i18n( $daily_count['other'] ) ); ?></p>
 		<p><strong>Bugün bölge spor (Amedspor vb., 30 sınırının DIŞINDA ek hak):</strong> <?php echo esc_html( number_format_i18n( $daily_count['bolge_spor'] ) ); ?> / <?php echo esc_html( number_format_i18n( VENG_OH_REGIONAL_SPORTS_DAILY_CAP ) ); ?></p>
