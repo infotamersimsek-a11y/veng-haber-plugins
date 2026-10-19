@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.51
+ * Version: 1.0.52
  * Author: Veng Haber
  */
 
@@ -481,7 +481,7 @@ function veng_oh_call_claude( $body, $timeout = 40 ) {
 		return new WP_Error( 'veng_oh_no_key', 'API anahtarı tanımlı değil.' );
 	}
 
-	return wp_remote_post( 'https://api.anthropic.com/v1/messages', array(
+	$res = wp_remote_post( 'https://api.anthropic.com/v1/messages', array(
 		'timeout' => $timeout,
 		'headers' => array(
 			'content-type'      => 'application/json',
@@ -490,6 +490,12 @@ function veng_oh_call_claude( $body, $timeout = 40 ) {
 		),
 		'body'    => wp_json_encode( $body ),
 	) );
+
+	if ( ! is_wp_error( $res ) && 200 === wp_remote_retrieve_response_code( $res ) ) {
+		delete_option( 'veng_oh_last_api_error' );
+	}
+
+	return $res;
 }
 
 /** Kaynak haberi Veng Haber editöryel kurallarına göre kendi cümleleriyle yeniden yazar. */
@@ -526,10 +532,12 @@ function veng_oh_editorial_rewrite( $item, $source ) {
 
 	if ( is_wp_error( $res ) ) {
 		veng_oh_log( 'Anthropic isteği başarısız: ' . $res->get_error_message() );
+		veng_oh_record_api_error( $res->get_error_message() );
 		return null;
 	}
 	if ( wp_remote_retrieve_response_code( $res ) !== 200 ) {
 		veng_oh_log( 'Anthropic API ' . wp_remote_retrieve_response_code( $res ) . ': ' . wp_remote_retrieve_body( $res ) );
+		veng_oh_record_api_error( wp_remote_retrieve_response_code( $res ) . ': ' . wp_remote_retrieve_body( $res ) );
 		return null;
 	}
 
@@ -600,10 +608,12 @@ function veng_oh_editorial_merge_rewrite( $story ) {
 
 	if ( is_wp_error( $res ) ) {
 		veng_oh_log( 'Anthropic harman isteği başarısız: ' . $res->get_error_message() );
+		veng_oh_record_api_error( $res->get_error_message() );
 		return null;
 	}
 	if ( wp_remote_retrieve_response_code( $res ) !== 200 ) {
 		veng_oh_log( 'Anthropic API (harman) ' . wp_remote_retrieve_response_code( $res ) . ': ' . wp_remote_retrieve_body( $res ) );
+		veng_oh_record_api_error( wp_remote_retrieve_response_code( $res ) . ': ' . wp_remote_retrieve_body( $res ) );
 		return null;
 	}
 
@@ -887,6 +897,19 @@ function veng_oh_backfill_attribution() {
 
 function veng_oh_log( $msg ) {
 	error_log( '[VengOtoHaber] ' . $msg );
+}
+
+/**
+ * Claude API çağrısı başarısız olduğunda sebebi admin sayfasında (Durum altında) görünür
+ * kılar — öncesinde sadece sunucunun PHP error_log'una yazılıyordu, kullanıcı FTP/panel
+ * olmadan asla göremiyordu. Taslağa düşen haberlerin gerçek sebebini (ör. "401: geçersiz
+ * key", "429: kota bitti") buradan teşhis etmek için.
+ */
+function veng_oh_record_api_error( $reason ) {
+	update_option( 'veng_oh_last_api_error', array(
+		'time'   => current_time( 'mysql' ),
+		'reason' => mb_substr( $reason, 0, 300 ),
+	) );
 }
 
 /**
@@ -1799,6 +1822,13 @@ function veng_oh_settings_page() {
 		<p class="description">"Kaynak Notunu Sadeleştir": eski "...habere git" linkli kaynak notunu sade "Güncel Haber Kaynak: X" ile değiştirir.<br>"Sahipsiz Görselleri Sil": hiçbir yazının öne çıkan görseli olmayan VE var olan bir yazıya bağlı olmayan görselleri siler (logo/site ikonu korunur) — sayı sıfırsa buton görünmez.</p>
 
 		<h2>Durum</h2>
+		<?php $last_api_error = get_option( 'veng_oh_last_api_error' ); ?>
+		<?php if ( $last_api_error && ! empty( $last_api_error['reason'] ) ) : ?>
+			<p style="background:#fef2f2;border:1px solid #fecaca;padding:10px 14px;border-radius:6px;">
+				<strong style="color:#991b1b;">Son API hatası</strong> (<?php echo esc_html( $last_api_error['time'] ); ?>): <?php echo esc_html( $last_api_error['reason'] ); ?><br>
+				<span style="font-size:12.5px;">Haberler sürekli taslağa düşüyorsa sebep muhtemelen bu — "401"/"invalid" geçiyorsa key geçersiz, "429"/"rate" ya da "credit"/"quota" geçiyorsa kota/bakiye bitmiş demektir. console.anthropic.com'dan kontrol et.</span>
+			</p>
+		<?php endif; ?>
 		<p><strong>Toplam otomatik haber:</strong> <?php echo esc_html( number_format_i18n( $auto_post_count ) ); ?></p>
 		<p><strong>Bugün eklenen:</strong> <?php echo esc_html( number_format_i18n( $daily_count['count'] ) ); ?> / <?php echo esc_html( number_format_i18n( VENG_OH_DAILY_CAP ) ); ?> (sunucuyu yormamak için günlük sınır, gece yarısı sıfırlanır)</p>
 		<p><strong>Bugün bölge dağılımı:</strong> Kürt bölgesi <?php echo esc_html( number_format_i18n( $daily_count['kurdish'] ) ); ?> (hedef: en az <?php echo esc_html( number_format_i18n( VENG_OH_KURDISH_DAILY_MIN ) ); ?>) · Dünya <?php echo esc_html( number_format_i18n( $daily_count['world'] ) ); ?> / <?php echo esc_html( number_format_i18n( VENG_OH_WORLD_DAILY_CAP ) ); ?> (tavan) · Diğer <?php echo esc_html( number_format_i18n( $daily_count['other'] ) ); ?></p>
