@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.50
+ * Version: 1.0.51
  * Author: Veng Haber
  */
 
@@ -145,6 +145,14 @@ function veng_oh_feeds() {
 	if ( $mezopotamya_url ) {
 		$feeds[] = array( 'url' => rtrim( $mezopotamya_url, '/' ) . '/', 'category' => 'gundem', 'source' => 'Mezopotamya Ajansı', 'sslverify' => false, 'region' => 'kurdish', 'type' => 'mezopotamya_embedded' );
 	}
+
+	// Site sahibinin isteğiyle GEÇİCİ olarak durduruldu (2026-10-19) — bu iki kaynağın
+	// og:meta taraması bozuk/eksik içerik üretip rewrite'ı başarısız kılıyordu, taslağa
+	// düşen haberlerin çoğu bunlardan geliyordu. Tekrar açmak için diziyi boşalt.
+	$veng_oh_temporarily_disabled_sources = array( 'Channel8', 'Mezopotamya Ajansı' );
+	$feeds = array_values( array_filter( $feeds, function ( $f ) use ( $veng_oh_temporarily_disabled_sources ) {
+		return ! in_array( $f['source'], $veng_oh_temporarily_disabled_sources, true );
+	} ) );
 
 	return $feeds;
 }
