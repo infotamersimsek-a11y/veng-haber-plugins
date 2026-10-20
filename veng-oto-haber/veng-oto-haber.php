@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.52
+ * Version: 1.0.53
  * Author: Veng Haber
  */
 
@@ -506,7 +506,7 @@ function veng_oh_editorial_rewrite( $item, $source ) {
 		return null;
 	}
 
-	$prompt = "Aşağıda \"{$source}\" kaynağından alınan bir haberin başlığı ve özeti var. Bunu Veng Haber editöryel kurallarına göre KENDİ CÜMLELERİNLE, özgün biçimde yeniden yaz (birebir kopyalama veya sadece kelime değiştirme yasak).\n\n"
+	$prompt = "Aşağıda \"{$source}\" kaynağından alınan bir haberin başlığı ve özeti var. Bunu Veng Haber editöryel kurallarına göre KENDİ CÜMLELERİNLE, özgün biçimde yeniden yaz. Birebir kopyalama veya sadece kelime değiştirme KESİNLİKLE yasak — cümle yapısını, sıralamayı, paragraf akışını değiştir; kaynaktaki cümleleri olduğu gibi veya yakın eşanlamlılarla geçirme, bilgiyi kendi kurduğun yeni cümlelerle anlat.\n\n"
 		. "Editöryel kurallar (BBC Türkçe tarzı hedeflenir):\n"
 		. "- Türkçe, ölçülü, sade, doğrudan haber dili kullan; BBC Türkçe'deki gibi resmi ama anlaşılır bir ton benimse.\n"
 		. "- İlk cümlede konunun özünü doğrudan ver (inverted pyramid); dramatik/duygusal sıfatlar, ünlem, abartı kullanma.\n"
@@ -560,6 +560,12 @@ function veng_oh_editorial_rewrite( $item, $source ) {
 	// Tek, aşırı yoğun bir cümleden ibaret "makale" (kaynak çok kısaysa olabiliyor) okunurluğu
 	// bozuyor — en az 2 paragraflık gerçek içerik yoksa başarısız say, ham veri yayınlanmasın.
 	if ( mb_strlen( wp_strip_all_tags( $parsed['content_html'] ) ) < 300 ) {
+		return null;
+	}
+	// Prompt "özgün yaz" diyor ama bazen kaynağı neredeyse birebir geçiyordu (ör. başlık/metin
+	// kaynakla AYNIYDI) — bu teknik bir yedek kontrol, sadece talimata güvenmiyoruz.
+	if ( veng_oh_too_similar( $item['title'], $parsed['title'], 85 ) || veng_oh_too_similar( $item['summary'], $parsed['content_html'], 65 ) ) {
+		veng_oh_log( 'Rewrite kaynağa çok benziyor (özgün değil), taslağa düşürüldü: ' . $parsed['title'] );
 		return null;
 	}
 	return $parsed;
@@ -636,6 +642,12 @@ function veng_oh_editorial_merge_rewrite( $story ) {
 	// Tek, aşırı yoğun bir cümleden ibaret "makale" (kaynak çok kısaysa olabiliyor) okunurluğu
 	// bozuyor — en az 2 paragraflık gerçek içerik yoksa başarısız say, ham veri yayınlanmasın.
 	if ( mb_strlen( wp_strip_all_tags( $parsed['content_html'] ) ) < 300 ) {
+		return null;
+	}
+	// Birincil kaynakla (ilk sıradaki) neredeyse birebir aynıysa harman gerçekleşmemiş demektir.
+	$primary = $story[0]['item'];
+	if ( veng_oh_too_similar( $primary['title'], $parsed['title'], 85 ) || veng_oh_too_similar( $primary['summary'], $parsed['content_html'], 65 ) ) {
+		veng_oh_log( 'Harman kaynağa çok benziyor (özgün değil), taslağa düşürüldü: ' . $parsed['title'] );
 		return null;
 	}
 	return $parsed;
@@ -910,6 +922,21 @@ function veng_oh_record_api_error( $reason ) {
 		'time'   => current_time( 'mysql' ),
 		'reason' => mb_substr( $reason, 0, 300 ),
 	) );
+}
+
+/**
+ * Rewrite kaynak metni neredeyse birebir kopyalayıp geçtiyse (ör. "Amedsporlu Futbolcu Gol
+ * Krallığından Oldu" haberinde başlık/metin kaynakla AYNIYDI) bunu yakalar — sadece prompt
+ * talimatına güvenmek yetmiyordu. $threshold yüzde benzerlik eşiği (0-100).
+ */
+function veng_oh_too_similar( $a, $b, $threshold ) {
+	$a = mb_strtolower( trim( wp_strip_all_tags( $a ) ), 'UTF-8' );
+	$b = mb_strtolower( trim( wp_strip_all_tags( $b ) ), 'UTF-8' );
+	if ( '' === $a || '' === $b ) {
+		return false;
+	}
+	similar_text( $a, $b, $percent );
+	return $percent >= $threshold;
 }
 
 /**
