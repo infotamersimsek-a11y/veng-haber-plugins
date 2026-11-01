@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.53
+ * Version: 1.0.54
  * Author: Veng Haber
  */
 
@@ -960,7 +960,28 @@ function veng_oh_get_daily_count() {
 	return $data;
 }
 
+/**
+ * Eşzamanlı (üst üste gelen site ziyareti / cron tetiklemesi) çağrılar aynı anda feed
+ * çekip Claude'a istek atmaya başlarsa, her biri onlarca saniye PHP-FPM worker'ı ve
+ * DB bağlantısı işgal ediyor — birkaçı üst üste gelince worker havuzu tükenip TÜM site
+ * (ana sayfa dahil) Cloudflare 520 vermeye başlıyordu. Basit transient kilidi: bir
+ * tarama sürerken yenisi hemen 0 dönüp çıkar, beklemez/kuyruğa girmez. Kilit en fazla
+ * 5 dk tutulur — gerçek bir tarama bundan uzun sürmemeli, süren kilitlenip kalırsa
+ * kendi kendine açılır.
+ */
 function veng_oh_run_import() {
+	if ( get_transient( 'veng_oh_import_running' ) ) {
+		return 0;
+	}
+	set_transient( 'veng_oh_import_running', 1, 5 * MINUTE_IN_SECONDS );
+	try {
+		return veng_oh_run_import_locked();
+	} finally {
+		delete_transient( 'veng_oh_import_running' );
+	}
+}
+
+function veng_oh_run_import_locked() {
 	// Arka planda (wp-cron) çalışıyor, kullanıcı sayfası bloklamıyor — yavaş kaynaklar
 	// toplamda 30sn'yi geçince PHP'nin varsayılan max_execution_time'ı tüm importu
 	// fatal ile öldürüp kalan kaynakları hiç denemeden bırakıyordu.
@@ -1327,6 +1348,18 @@ function veng_oh_bulk_delete_posts( $post_ids ) {
  * gösterilen sayıyı gördükten sonra yapılır (geçmişteki yanlış toplu silme sonrası
  * verilen söz: önce kesin sayı göster, sonra onayla).
  */
+/** Sorgu binlerce yazıda ağır olabilir (LIKE taraması) — her sayfa yüklemesinde çalışmasın diye 10 dk önbelleklenir. */
+function veng_oh_count_sputnik_posts_cached() {
+	$cached = get_transient( 'veng_oh_sputnik_count' );
+	if ( false !== $cached ) {
+		return $cached;
+	}
+	$result = veng_oh_count_sputnik_posts();
+	$cached = array( 'count' => $result['count'] );
+	set_transient( 'veng_oh_sputnik_count', $cached, 10 * MINUTE_IN_SECONDS );
+	return $cached;
+}
+
 function veng_oh_count_sputnik_posts() {
 	global $wpdb;
 	$ids = $wpdb->get_col( $wpdb->prepare(
@@ -1771,6 +1804,7 @@ function veng_oh_settings_page() {
 		$batch = array_slice( $sputnik['ids'], 0, 200 );
 		$deleted = veng_oh_delete_sputnik_posts( $batch );
 		$remaining = $sputnik['count'] - $deleted;
+		delete_transient( 'veng_oh_sputnik_count' );
 		echo '<div class="notice notice-success"><p>' . intval( $deleted ) . ' Sputnik kaynaklı haber çöpe taşındı (geri alınabilir).' . ( $remaining > 0 ? ' Hâlâ ' . intval( $remaining ) . ' tane kaldı, butona tekrar bas.' : ' Hepsi temizlendi.' ) . '</p></div>';
 	}
 
@@ -1840,7 +1874,7 @@ function veng_oh_settings_page() {
 				<?php if ( $orphans['count'] > 0 ) : ?>
 					<button type="submit" name="veng_oh_delete_orphaned_media" class="button" onclick="return confirm('<?php echo esc_js( number_format_i18n( $orphans['count'] ) ); ?> sahipsiz görsel (yaklaşık <?php echo esc_js( size_format( $orphans['bytes'] ) ); ?>) kalıcı olarak silinecek. Emin misin?' );">Sahipsiz Görselleri Sil (<?php echo esc_html( number_format_i18n( $orphans['count'] ) ); ?>, ~<?php echo esc_html( size_format( $orphans['bytes'] ) ); ?>)</button>
 				<?php endif; ?>
-				<?php $sputnik = veng_oh_count_sputnik_posts(); ?>
+				<?php $sputnik = veng_oh_count_sputnik_posts_cached(); ?>
 				<?php if ( $sputnik['count'] > 0 ) : ?>
 					<button type="submit" name="veng_oh_delete_sputnik_posts" class="button" onclick="return confirm('<?php echo esc_js( number_format_i18n( $sputnik['count'] ) ); ?> Sputnik kaynaklı haber çöpe taşınacak (kalıcı silinmez, Çöp Kutusu\'ndan geri alınabilir). Emin misin?' );">Sputnik Haberlerini Çöpe Taşı (<?php echo esc_html( number_format_i18n( $sputnik['count'] ) ); ?>)</button>
 				<?php endif; ?>
