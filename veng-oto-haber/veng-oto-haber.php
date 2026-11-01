@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Veng Oto Haber
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.54
+ * Version: 1.0.55
  * Author: Veng Haber
  */
 
@@ -1009,7 +1009,7 @@ function veng_oh_run_import_locked() {
 	$candidates = array();
 	foreach ( veng_oh_feeds() as $feed ) {
 		$res = wp_remote_get( $feed['url'], array(
-			'timeout'    => 15,
+			'timeout'    => 8, // 24 kaynak sırayla çekiliyor; yavaş/ölü kaynaklar tek taramayı dakikalarca uzatıp worker'ı tıkamasın diye düşürüldü.
 			'user-agent' => $feed['user_agent'] ?? 'Mozilla/5.0 (compatible; VengHaberBot/1.0; +https://venghaber.com)',
 			'sslverify'  => $feed['sslverify'] ?? true,
 		) );
@@ -1589,7 +1589,7 @@ function veng_oh_run_emergency_category_fill( $max_imports_per_run = 6 ) {
 			break;
 		}
 		$res = wp_remote_get( $feed['url'], array(
-			'timeout'    => 15,
+			'timeout'    => 8, // 24 kaynak sırayla çekiliyor; yavaş/ölü kaynaklar tek taramayı dakikalarca uzatıp worker'ı tıkamasın diye düşürüldü.
 			'user-agent' => $feed['user_agent'] ?? 'Mozilla/5.0 (compatible; VengHaberBot/1.0; +https://venghaber.com)',
 			'sslverify'  => $feed['sslverify'] ?? true,
 		) );
@@ -1774,8 +1774,20 @@ function veng_oh_settings_page() {
 	}
 
 	if ( isset( $_POST['veng_oh_run_now'] ) && check_admin_referer( 'veng_oh_settings' ) ) {
-		$created = veng_oh_run_import();
-		echo '<div class="notice notice-success"><p>Manuel tarama tamamlandı: ' . intval( $created ) . ' yeni haber eklendi.</p></div>';
+		// ÖNEMLİ: veng_oh_run_import() önceden burada DOĞRUDAN çağrılıyordu — yani
+		// bu admin sayfasının kendi HTTP isteği, tüm RSS kaynakları (kaynak başına
+		// 15sn'ye kadar) + Claude çağrıları (her biri 40sn'ye kadar) bitene kadar
+		// bloke oluyordu. Tek tıkla bile bu toplam süre Cloudflare'ın origin zaman
+		// aşımını (~100sn) kolayca geçip 520 üretiyordu. Artık wp-cron'un kendi
+		// kullandığı aynı arka plan tetikleme deseniyle (spawn_cron) işi hemen
+		// kuyruğa alıp bu sayfanın isteğini ANINDA bitiriyoruz — tarama arka planda,
+		// ayrı bir istekte çalışır, kilit (veng_oh_import_running) üst üste binmeyi
+		// zaten engelliyor.
+		wp_schedule_single_event( time(), 'veng_oh_import_event' );
+		if ( function_exists( 'spawn_cron' ) ) {
+			spawn_cron();
+		}
+		echo '<div class="notice notice-success"><p>Tarama arka planda başlatıldı. 30-60 saniye sonra bu sayfayı yenile, "Son Çalışma" kısmında sonucu görürsün.</p></div>';
 	}
 
 	if ( isset( $_POST['veng_oh_reset_daily_count'] ) && check_admin_referer( 'veng_oh_settings' ) ) {
