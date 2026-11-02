@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Oto Haber AI
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.58
+ * Version: 1.0.59
  * Author: Veng Haber
  */
 
@@ -978,7 +978,6 @@ function veng_oh_run_import() {
 		return veng_oh_run_import_locked();
 	} finally {
 		delete_transient( 'veng_oh_import_running' );
-		delete_transient( 'veng_oh_admin_stats' );
 	}
 }
 
@@ -1341,18 +1340,6 @@ function veng_oh_bulk_delete_posts( $post_ids ) {
  * gösterilen sayıyı gördükten sonra yapılır (geçmişteki yanlış toplu silme sonrası
  * verilen söz: önce kesin sayı göster, sonra onayla).
  */
-/** Sorgu binlerce yazıda ağır olabilir (LIKE taraması) — her sayfa yüklemesinde çalışmasın diye 10 dk önbelleklenir. */
-function veng_oh_count_sputnik_posts_cached() {
-	$cached = get_transient( 'veng_oh_sputnik_count' );
-	if ( false !== $cached ) {
-		return $cached;
-	}
-	$result = veng_oh_count_sputnik_posts();
-	$cached = array( 'count' => $result['count'] );
-	set_transient( 'veng_oh_sputnik_count', $cached, 10 * MINUTE_IN_SECONDS );
-	return $cached;
-}
-
 function veng_oh_count_sputnik_posts() {
 	global $wpdb;
 	$ids = $wpdb->get_col( $wpdb->prepare(
@@ -1391,46 +1378,41 @@ function veng_oh_delete_sputnik_posts( $ids ) {
  * bu fonksiyon SADECE SAYAR — hiçbir şeyi otomatik silmez. Silme ayrı, kullanıcının
  * elle bastığı bir butonla, burada gösterilen sayıyı gördükten sonra yapılır.
  */
-/** Sorgu binlerce medyada ağır olabilir — her sayfa yüklemesinde çalışmasın diye 10 dk önbelleklenir. */
-function veng_oh_count_orphaned_media_cached() {
-	$cached = get_transient( 'veng_oh_orphaned_media_count' );
-	if ( false !== $cached ) {
-		return $cached;
-	}
-	$result = veng_oh_count_orphaned_media();
-	// $ids transient'e yazılmaz (ID listesi büyük olabilir) — sadece sayı/boyut cache'lenir,
-	// gerçek silme butonuna basıldığında taze sorgu yeniden çalışır.
-	set_transient( 'veng_oh_orphaned_media_count', array( 'count' => $result['count'], 'bytes' => $result['bytes'] ), 10 * MINUTE_IN_SECONDS );
-	return array( 'count' => $result['count'], 'bytes' => $result['bytes'] );
-}
-
 function veng_oh_count_orphaned_media() {
 	global $wpdb;
 	$protected = array_filter( array(
 		(int) get_theme_mod( 'custom_logo' ),
 		(int) get_option( 'site_icon' ),
 	) );
-	$protected_sql = empty( $protected ) ? '0' : implode( ',', array_map( 'intval', $protected ) );
 
-	$ids = $wpdb->get_col(
-		"SELECT p.ID FROM {$wpdb->posts} p
-		 WHERE p.post_type = 'attachment'
-		 AND p.ID NOT IN ({$protected_sql})
-		 AND NOT EXISTS (
-		     SELECT 1 FROM {$wpdb->postmeta} m
-		     WHERE m.meta_key = '_thumbnail_id' AND m.meta_value = p.ID
-		 )
-		 AND (
-		     p.post_parent = 0
-		     OR NOT EXISTS ( SELECT 1 FROM {$wpdb->posts} parent WHERE parent.ID = p.post_parent )
-		 )"
+	// meta_value indekssiz: her görsel için "öne çıkan görsel mi" alt sorgusu postmeta'yı
+	// görsel sayısı kadar tarıyordu. Öne çıkan görsel ID'leri tek sorguyla PHP'ye alınır.
+	$thumb_ids = array_flip( array_map( 'intval', $wpdb->get_col(
+		"SELECT DISTINCT meta_value FROM {$wpdb->postmeta} WHERE meta_key = '_thumbnail_id'"
+	) ) );
+
+	// Dosya yolu da aynı sorguda gelir — get_attached_file() görsel başına ayrı sorgu atıyordu.
+	$rows = $wpdb->get_results(
+		"SELECT a.ID, fm.meta_value AS file FROM {$wpdb->posts} a
+		 LEFT JOIN {$wpdb->posts} parent ON parent.ID = a.post_parent
+		 LEFT JOIN {$wpdb->postmeta} fm ON fm.post_id = a.ID AND fm.meta_key = '_wp_attached_file'
+		 WHERE a.post_type = 'attachment' AND ( a.post_parent = 0 OR parent.ID IS NULL )"
 	);
 
+	$basedir = trailingslashit( wp_get_upload_dir()['basedir'] );
+	$ids = array();
 	$total_bytes = 0;
-	foreach ( $ids as $aid ) {
-		$file = get_attached_file( $aid );
-		if ( $file && file_exists( $file ) ) {
-			$total_bytes += filesize( $file );
+	foreach ( $rows as $row ) {
+		$aid = (int) $row->ID;
+		if ( isset( $thumb_ids[ $aid ] ) || in_array( $aid, $protected, true ) ) {
+			continue;
+		}
+		$ids[] = $aid;
+		if ( $row->file ) {
+			$file = path_is_absolute( $row->file ) ? $row->file : $basedir . $row->file;
+			if ( file_exists( $file ) ) {
+				$total_bytes += filesize( $file );
+			}
 		}
 	}
 
@@ -1546,19 +1528,45 @@ function veng_oh_register_settings_page() {
 add_action( 'admin_menu', 'veng_oh_register_settings_page' );
 
 /**
- * Ayarlar sayfası her açıldığında (sadece "Şimdi Çalıştır" tıklanınca değil — düz
- * SAYFA YÜKLEMESİNDE de) iki ağır sorgu KOŞULSUZ çalışıyordu: tüm postmeta'yı JOIN'leyen
- * sayım + TÜM yazıları yazara göre GROUP BY ile tarayan sorgu. Haber sayısı arttıkça bu
- * sorgu ağırlaşıp worker'ı bloke ediyor, sayfayı AÇMAK bile 502 üretebiliyordu — "Şimdi
- * Çalıştır" kilidi ve Sputnik sayımı önbelleklense de bu ikisi hâlâ önbelleksizdi. Sputnik
- * sayımıyla aynı desen: 10 dk önbellek.
+ * Ayarlar sayfasındaki ağır istatistikler (otomatik haber sayısı, yazar dağılımı, sahipsiz
+ * görsel, Sputnik) sayfa isteğinde HİÇ hesaplanmaz. "Önbellek boşsa sayfada hesapla" deseni
+ * işe yaramıyordu: ilk hesap zaman aşımına düşünce önbellek hiç dolmuyor, her tıklama aynı
+ * ağır sorguyu baştan başlatıp admin'i kilitliyordu. Artık wp-cron'da hesaplanıp transient'e
+ * yazılıyor; sayfa sadece okuyor, yoksa "hesaplanıyor" gösterip arka plan işini tetikliyor.
  */
-function veng_oh_get_admin_stats_cached() {
-	$cached = get_transient( 'veng_oh_admin_stats' );
-	if ( false !== $cached ) {
-		return $cached;
+function veng_oh_stats_cache_get( $key ) {
+	$value = get_transient( $key );
+	if ( false === $value ) {
+		veng_oh_schedule_stats_refresh();
 	}
+	return $value;
+}
 
+function veng_oh_schedule_stats_refresh() {
+	if ( get_transient( 'veng_oh_stats_refreshing' ) ) {
+		return;
+	}
+	set_transient( 'veng_oh_stats_refreshing', 1, 10 * MINUTE_IN_SECONDS );
+	wp_schedule_single_event( time(), 'veng_oh_refresh_stats_event' );
+	if ( function_exists( 'spawn_cron' ) ) {
+		spawn_cron();
+	}
+}
+
+function veng_oh_refresh_stats() {
+	if ( function_exists( 'set_time_limit' ) ) {
+		@set_time_limit( 0 );
+	}
+	set_transient( 'veng_oh_admin_stats', veng_oh_compute_admin_stats(), HOUR_IN_SECONDS );
+	$orphans = veng_oh_count_orphaned_media();
+	set_transient( 'veng_oh_orphaned_media_count', array( 'count' => $orphans['count'], 'bytes' => $orphans['bytes'] ), HOUR_IN_SECONDS );
+	$sputnik = veng_oh_count_sputnik_posts();
+	set_transient( 'veng_oh_sputnik_count', array( 'count' => $sputnik['count'] ), HOUR_IN_SECONDS );
+	delete_transient( 'veng_oh_stats_refreshing' );
+}
+add_action( 'veng_oh_refresh_stats_event', 'veng_oh_refresh_stats' );
+
+function veng_oh_compute_admin_stats() {
 	global $wpdb;
 	$auto_post_count = (int) $wpdb->get_var( $wpdb->prepare(
 		"SELECT COUNT(*) FROM {$wpdb->posts} p
@@ -1578,12 +1586,10 @@ function veng_oh_get_admin_stats_cached() {
 		 GROUP BY p.post_author ORDER BY cnt DESC"
 	);
 
-	$stats = array(
+	return array(
 		'auto_post_count'    => $auto_post_count,
 		'unmarked_by_author' => $unmarked_by_author,
 	);
-	set_transient( 'veng_oh_admin_stats', $stats, 10 * MINUTE_IN_SECONDS );
-	return $stats;
 }
 
 function veng_oh_settings_page() {
@@ -1683,9 +1689,9 @@ function veng_oh_settings_page() {
 	$last = get_option( 'veng_oh_last_run' );
 	$next_cron = wp_next_scheduled( 'veng_oh_import_event' );
 	$daily_count = veng_oh_get_daily_count();
-	$admin_stats = veng_oh_get_admin_stats_cached();
-	$auto_post_count = $admin_stats['auto_post_count'];
-	$unmarked_by_author = $admin_stats['unmarked_by_author'];
+	$admin_stats = veng_oh_stats_cache_get( 'veng_oh_admin_stats' );
+	$auto_post_count = $admin_stats ? $admin_stats['auto_post_count'] : null;
+	$unmarked_by_author = $admin_stats ? $admin_stats['unmarked_by_author'] : array();
 	?>
 	<div class="wrap">
 		<h1>Oto Haber AI</h1>
@@ -1725,12 +1731,12 @@ function veng_oh_settings_page() {
 				<button type="submit" name="veng_oh_run_now" class="button">Şimdi Çalıştır</button>
 				<button type="submit" name="veng_oh_reset_daily_count" class="button" onclick="return confirm('Bugünkü sayaç (toplam + Kürt/Dünya/Diğer dağılımı) sıfırlanacak. Yazı silinmez, sadece sayaç. Emin misin?');">Günlük Sayacı Sıfırla</button>
 				<button type="submit" name="veng_oh_backfill_attribution" class="button">Kaynak Notunu Sadeleştir</button>
-				<?php $orphans = veng_oh_count_orphaned_media_cached(); ?>
-				<?php if ( $orphans['count'] > 0 ) : ?>
+				<?php $orphans = veng_oh_stats_cache_get( 'veng_oh_orphaned_media_count' ); ?>
+				<?php if ( $orphans && $orphans['count'] > 0 ) : ?>
 					<button type="submit" name="veng_oh_delete_orphaned_media" class="button" onclick="return confirm('<?php echo esc_js( number_format_i18n( $orphans['count'] ) ); ?> sahipsiz görsel (yaklaşık <?php echo esc_js( size_format( $orphans['bytes'] ) ); ?>) kalıcı olarak silinecek. Emin misin?' );">Sahipsiz Görselleri Sil (<?php echo esc_html( number_format_i18n( $orphans['count'] ) ); ?>, ~<?php echo esc_html( size_format( $orphans['bytes'] ) ); ?>)</button>
 				<?php endif; ?>
-				<?php $sputnik = veng_oh_count_sputnik_posts_cached(); ?>
-				<?php if ( $sputnik['count'] > 0 ) : ?>
+				<?php $sputnik = veng_oh_stats_cache_get( 'veng_oh_sputnik_count' ); ?>
+				<?php if ( $sputnik && $sputnik['count'] > 0 ) : ?>
 					<button type="submit" name="veng_oh_delete_sputnik_posts" class="button" onclick="return confirm('<?php echo esc_js( number_format_i18n( $sputnik['count'] ) ); ?> Sputnik kaynaklı haber çöpe taşınacak (kalıcı silinmez, Çöp Kutusu\'ndan geri alınabilir). Emin misin?' );">Sputnik Haberlerini Çöpe Taşı (<?php echo esc_html( number_format_i18n( $sputnik['count'] ) ); ?>)</button>
 				<?php endif; ?>
 			</p>
@@ -1745,7 +1751,7 @@ function veng_oh_settings_page() {
 				<span style="font-size:12.5px;">Haberler sürekli taslağa düşüyorsa sebep muhtemelen bu — "401"/"invalid" geçiyorsa key geçersiz, "429"/"rate" ya da "credit"/"quota" geçiyorsa kota/bakiye bitmiş demektir. console.anthropic.com'dan kontrol et.</span>
 			</p>
 		<?php endif; ?>
-		<p><strong>Toplam otomatik haber:</strong> <?php echo esc_html( number_format_i18n( $auto_post_count ) ); ?></p>
+		<p><strong>Toplam otomatik haber:</strong> <?php echo null === $auto_post_count ? 'hesaplanıyor… (1-2 dk sonra sayfayı yenile)' : esc_html( number_format_i18n( $auto_post_count ) ); ?></p>
 		<p><strong>Bugün eklenen:</strong> <?php echo esc_html( number_format_i18n( $daily_count['count'] ) ); ?> / <?php echo esc_html( number_format_i18n( VENG_OH_DAILY_CAP ) ); ?> (sunucuyu yormamak için günlük sınır, gece yarısı sıfırlanır)</p>
 		<p><strong>Bugün bölge dağılımı:</strong> Kürt bölgesi <?php echo esc_html( number_format_i18n( $daily_count['kurdish'] ) ); ?> (hedef: en az <?php echo esc_html( number_format_i18n( VENG_OH_KURDISH_DAILY_MIN ) ); ?>) · Dünya <?php echo esc_html( number_format_i18n( $daily_count['world'] ) ); ?> / <?php echo esc_html( number_format_i18n( VENG_OH_WORLD_DAILY_CAP ) ); ?> (tavan) · Diğer <?php echo esc_html( number_format_i18n( $daily_count['other'] ) ); ?></p>
 		<p><strong>Bugün bölge spor (Amedspor vb., 30 sınırının DIŞINDA ek hak):</strong> <?php echo esc_html( number_format_i18n( $daily_count['bolge_spor'] ) ); ?> / <?php echo esc_html( number_format_i18n( VENG_OH_REGIONAL_SPORTS_DAILY_CAP ) ); ?></p>
