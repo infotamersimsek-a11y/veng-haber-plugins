@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Oto Haber AI
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.56
+ * Version: 1.0.57
  * Author: Veng Haber
  */
 
@@ -978,6 +978,7 @@ function veng_oh_run_import() {
 		return veng_oh_run_import_locked();
 	} finally {
 		delete_transient( 'veng_oh_import_running' );
+		delete_transient( 'veng_oh_admin_stats' );
 	}
 }
 
@@ -1728,6 +1729,47 @@ function veng_oh_register_settings_page() {
 }
 add_action( 'admin_menu', 'veng_oh_register_settings_page' );
 
+/**
+ * Ayarlar sayfası her açıldığında (sadece "Şimdi Çalıştır" tıklanınca değil — düz
+ * SAYFA YÜKLEMESİNDE de) iki ağır sorgu KOŞULSUZ çalışıyordu: tüm postmeta'yı JOIN'leyen
+ * sayım + TÜM yazıları yazara göre GROUP BY ile tarayan sorgu. Haber sayısı arttıkça bu
+ * sorgu ağırlaşıp worker'ı bloke ediyor, sayfayı AÇMAK bile 502 üretebiliyordu — "Şimdi
+ * Çalıştır" kilidi ve Sputnik sayımı önbelleklense de bu ikisi hâlâ önbelleksizdi. Sputnik
+ * sayımıyla aynı desen: 10 dk önbellek.
+ */
+function veng_oh_get_admin_stats_cached() {
+	$cached = get_transient( 'veng_oh_admin_stats' );
+	if ( false !== $cached ) {
+		return $cached;
+	}
+
+	global $wpdb;
+	$auto_post_count = (int) $wpdb->get_var( $wpdb->prepare(
+		"SELECT COUNT(*) FROM {$wpdb->posts} p
+		 INNER JOIN {$wpdb->postmeta} m ON m.post_id = p.ID AND m.meta_key = %s
+		 WHERE p.post_type IN ('post','makale') AND p.post_status = 'publish'",
+		'_veng_source_name'
+	) );
+	// "_veng_source_name" etiketi olmayan yazılar: ya elle yazılmış, ya da bu eklentiden
+	// ÖNCEKİ bir sistemin eklediği eski kayıtlar olabilir. Hangisi olduğunu güvenle ayırt
+	// etmeden toplu silmek riskli — bu yüzden sadece yazara göre sayıp GÖSTERİYORUZ,
+	// otomatik silmiyoruz. Hangi yazarın "bot/eski sistem" olduğu bu listeden anlaşılır.
+	$unmarked_by_author = $wpdb->get_results(
+		"SELECT p.post_author, COUNT(*) cnt, MIN(p.post_date) oldest, MAX(p.post_date) newest
+		 FROM {$wpdb->posts} p
+		 LEFT JOIN {$wpdb->postmeta} m ON m.post_id = p.ID AND m.meta_key = '_veng_source_name'
+		 WHERE p.post_type IN ('post','makale') AND p.post_status = 'publish' AND m.post_id IS NULL
+		 GROUP BY p.post_author ORDER BY cnt DESC"
+	);
+
+	$stats = array(
+		'auto_post_count'    => $auto_post_count,
+		'unmarked_by_author' => $unmarked_by_author,
+	);
+	set_transient( 'veng_oh_admin_stats', $stats, 10 * MINUTE_IN_SECONDS );
+	return $stats;
+}
+
 function veng_oh_settings_page() {
 	if ( ! current_user_can( 'manage_options' ) ) {
 		return;
@@ -1825,24 +1867,9 @@ function veng_oh_settings_page() {
 	$last = get_option( 'veng_oh_last_run' );
 	$next_cron = wp_next_scheduled( 'veng_oh_import_event' );
 	$daily_count = veng_oh_get_daily_count();
-	global $wpdb;
-	$auto_post_count = (int) $wpdb->get_var( $wpdb->prepare(
-		"SELECT COUNT(*) FROM {$wpdb->posts} p
-		 INNER JOIN {$wpdb->postmeta} m ON m.post_id = p.ID AND m.meta_key = %s
-		 WHERE p.post_type IN ('post','makale') AND p.post_status = 'publish'",
-		'_veng_source_name'
-	) );
-	// "_veng_source_name" etiketi olmayan yazılar: ya elle yazılmış, ya da bu eklentiden
-	// ÖNCEKİ bir sistemin eklediği eski kayıtlar olabilir. Hangisi olduğunu güvenle ayırt
-	// etmeden toplu silmek riskli — bu yüzden sadece yazara göre sayıp GÖSTERİYORUZ,
-	// otomatik silmiyoruz. Hangi yazarın "bot/eski sistem" olduğu bu listeden anlaşılır.
-	$unmarked_by_author = $wpdb->get_results(
-		"SELECT p.post_author, COUNT(*) cnt, MIN(p.post_date) oldest, MAX(p.post_date) newest
-		 FROM {$wpdb->posts} p
-		 LEFT JOIN {$wpdb->postmeta} m ON m.post_id = p.ID AND m.meta_key = '_veng_source_name'
-		 WHERE p.post_type IN ('post','makale') AND p.post_status = 'publish' AND m.post_id IS NULL
-		 GROUP BY p.post_author ORDER BY cnt DESC"
-	);
+	$admin_stats = veng_oh_get_admin_stats_cached();
+	$auto_post_count = $admin_stats['auto_post_count'];
+	$unmarked_by_author = $admin_stats['unmarked_by_author'];
 	?>
 	<div class="wrap">
 		<h1>Oto Haber AI</h1>
