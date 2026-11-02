@@ -1,8 +1,8 @@
 <?php
 /**
- * Plugin Name: Veng Oto Haber
+ * Plugin Name: Oto Haber AI
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.55
+ * Version: 1.0.56
  * Author: Veng Haber
  */
 
@@ -1724,7 +1724,7 @@ register_deactivation_hook( __FILE__, 'veng_oh_deactivate' );
 
 /** Ayarlar sayfası: tek yerde API anahtarı, yayın modu, durum ve manuel çalıştırma. */
 function veng_oh_register_settings_page() {
-	add_menu_page( 'Veng Oto Haber', 'Oto Haber', 'manage_options', 'veng-oto-haber', 'veng_oh_settings_page', 'dashicons-rss', 25 );
+	add_menu_page( 'Oto Haber AI', 'Oto Haber AI', 'manage_options', 'veng-oto-haber', 'veng_oh_settings_page', 'dashicons-rss', 25 );
 }
 add_action( 'admin_menu', 'veng_oh_register_settings_page' );
 
@@ -1845,7 +1845,7 @@ function veng_oh_settings_page() {
 	);
 	?>
 	<div class="wrap">
-		<h1>Veng Oto Haber</h1>
+		<h1>Oto Haber AI</h1>
 		<p>RSS kaynaklarından haberleri çeker, Claude ile editöryel kurallara göre yeniden yazar, kategoriye göre yayınlar. Her 15 dakikada bir kendi kendine çalışır (site ziyaretiyle tetiklenir).</p>
 
 		<form method="post">
