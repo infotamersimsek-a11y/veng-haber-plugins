@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Oto Haber AI
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.57
+ * Version: 1.0.58
  * Author: Veng Haber
  */
 
@@ -1275,14 +1275,6 @@ function veng_oh_group_and_pick_stories( $candidates, $limit ) {
 }
 
 /**
- * Otomatik çekilmiş haberleri ve görsellerini kalıcı olarak siler — SADECE
- * '_veng_source_name' meta'sı olan (botun eklediği) yazılara dokunur, elle yazılmış
- * haberler asla silinmez. wp_delete_post() döngüsü yerine toplu SQL kullanır.
- * Tek seferde tümünü silmeye çalışmak zayıf sunucularda 502'ye yol açtı — bu yüzden
- * her çağrıda en fazla $batch_size işlenir, çağıran taraf "posts" boş dönene kadar
- * tekrar tekrar çağırır (bkz. veng_oh_maybe_run_pending_wipe).
- */
-/**
  * Verilen yazı ID'lerini (ve öne çıkan görsellerini) toplu SQL ile siler — wp_delete_post()
  * döngüsü binlerce kayıtta çok yavaş kalıp 500/502 hatasına yol açıyordu, bu çok daha hızlı.
  */
@@ -1480,60 +1472,21 @@ function veng_oh_delete_orphaned_media( $ids ) {
 	return array( 'deleted' => count( $ids ), 'files' => $files_deleted );
 }
 
-function veng_oh_wipe_all_auto_content( $batch_size = 200 ) {
-	global $wpdb;
-	if ( function_exists( 'set_time_limit' ) ) {
-		@set_time_limit( 0 );
-	}
-
-	$post_ids = $wpdb->get_col( $wpdb->prepare(
-		"SELECT p.ID FROM {$wpdb->posts} p
-		 INNER JOIN {$wpdb->postmeta} m ON m.post_id = p.ID AND m.meta_key = %s
-		 WHERE p.post_type IN ('post','makale') LIMIT %d",
-		'_veng_source_name',
-		$batch_size
-	) );
-
-	$result = veng_oh_bulk_delete_posts( $post_ids );
-	if ( $result['posts'] > 0 ) {
-		veng_oh_log( 'Tam temizlik: ' . $result['posts'] . ' otomatik haber, ' . $result['attachments'] . ' görsel (' . $result['files'] . ' dosya) silindi.' );
-	}
-	return $result;
-}
-
 /**
- * Yeni yüklenen eklenti kodu çalıştığında (sen buton falan tıklamadan, sadece wp-admin'e
- * her girişte) otomatik haberleri parça parça temizler — tek istekte binlercesini silmeye
- * çalışmak zayıf sunucuda 502/500'e yol açtı, bu yüzden her sayfa girişinde en fazla 200
- * işlenir, sayaç (option) üstünde birikir, hepsi bitince bayrak set edilip durur.
- * Aktivasyon isteğinin kendisinde çalışmaz (o istek zaten kırılgan) — sonraki normal
- * sayfa yüklemelerinde devam eder.
+ * Eski tek seferlik işler (tam temizlik + acil kategori doldurma) her admin isteğinde
+ * plugins_loaded'da SENKRON çalışıyordu: doldurma 24 RSS kaynağını çekip Claude'a 6 haber
+ * yazdırıyor, kilitsiz — plugins.php, Oto Haber sayfası, heartbeat hepsi bunu tetikleyip
+ * admin'i kilitliyordu. Temizlik ise bayrak kaybolursa TÜM otomatik haberleri silerdi.
+ * İkisi de kaldırıldı; bayraklar kalıcı olarak "tamamlandı" işaretlenir.
  */
-function veng_oh_maybe_run_pending_wipe() {
-	if ( ! is_admin() || '1' === get_option( 'veng_oh_full_wipe_v1_done' ) ) {
-		return;
-	}
-	if ( isset( $_GET['action'] ) && 'activate' === $_GET['action'] ) {
-		return;
-	}
-
-	$result = veng_oh_wipe_all_auto_content( 200 );
-
-	$cumulative = get_option( 'veng_oh_full_wipe_v1_result' );
-	if ( ! is_array( $cumulative ) ) {
-		$cumulative = array( 'posts' => 0, 'attachments' => 0, 'files' => 0 );
-	}
-	$cumulative['posts'] = ( $cumulative['posts'] ?? 0 ) + $result['posts'];
-	$cumulative['attachments'] = ( $cumulative['attachments'] ?? 0 ) + $result['attachments'];
-	$cumulative['files'] = ( $cumulative['files'] ?? 0 ) + $result['files'];
-	$cumulative['time'] = current_time( 'mysql' );
-	update_option( 'veng_oh_full_wipe_v1_result', $cumulative );
-
-	if ( 0 === $result['posts'] ) {
-		update_option( 'veng_oh_full_wipe_v1_done', '1' );
+function veng_oh_force_disable_legacy_jobs() {
+	foreach ( array( 'veng_oh_full_wipe_v1_done', 'veng_oh_emergency_fill_2026_10_done', 'veng_oh_fresh_restart_2026_09_done', 'veng_oh_emergency_fill_v2_restarted' ) as $flag ) {
+		if ( '1' !== get_option( $flag ) ) {
+			update_option( $flag, '1' );
+		}
 	}
 }
-add_action( 'plugins_loaded', 'veng_oh_maybe_run_pending_wipe' );
+add_action( 'plugins_loaded', 'veng_oh_force_disable_legacy_jobs', 1 );
 
 /**
  * KALDIRILDI (v1.0.13): "son 1 günden eski her şeyi sil" görevi öngörülenden çok daha
@@ -1551,143 +1504,6 @@ function veng_oh_force_disable_date_cleanup() {
 }
 add_action( 'plugins_loaded', 'veng_oh_force_disable_date_cleanup', 1 );
 
-/**
- * ACİL TEK SEFERLİK DOLDURMA: yanlışlıkla silinen içeriğin yerine, her ana sayfa
- * kategorisinde en az 6 haber olacak şekilde mevcut RSS kaynaklarından GERÇEK haber
- * çeker (uydurma yok) — anahtar kelime sınıflandırmasıyla (veng_oh_classify_category_slug)
- * doğru kategoriye yerleştirir. Her AI yeniden-yazma çağrısı birkaç saniye sürdüğü için
- * tek istekte az sayıda (6) işlenir, sayfa yüklemesi başına devam eder. 15 denemeden
- * sonra ya da bir turda hiç ilerleme olmazsa durur (bazı kategoriler için yeterli
- * kaynak bulunamayabilir, sonsuz döngüye girmesin).
- */
-function veng_oh_category_needs( $min = 6 ) {
-	$slugs = array( 'dunya', 'gundem', 'ekonomi', 'siyaset', 'spor', 'teknoloji', 'saglik', 'kultur-sanat', 'magazin', 'yasam' );
-	$needs = array();
-	foreach ( $slugs as $slug ) {
-		$cat = veng_oh_resolve_category_by_slug( $slug );
-		if ( ! $cat ) {
-			continue;
-		}
-		if ( (int) $cat->count < $min ) {
-			$needs[ $slug ] = $min - (int) $cat->count;
-		}
-	}
-	return $needs;
-}
-
-function veng_oh_run_emergency_category_fill( $max_imports_per_run = 6 ) {
-	if ( function_exists( 'set_time_limit' ) ) {
-		@set_time_limit( 0 );
-	}
-	$needs = veng_oh_category_needs( 6 );
-	if ( empty( $needs ) ) {
-		return array( 'created' => 0, 'done' => true );
-	}
-
-	$created = 0;
-	foreach ( veng_oh_feeds() as $feed ) {
-		if ( $created >= $max_imports_per_run ) {
-			break;
-		}
-		$res = wp_remote_get( $feed['url'], array(
-			'timeout'    => 8, // 24 kaynak sırayla çekiliyor; yavaş/ölü kaynaklar tek taramayı dakikalarca uzatıp worker'ı tıkamasın diye düşürüldü.
-			'user-agent' => $feed['user_agent'] ?? 'Mozilla/5.0 (compatible; VengHaberBot/1.0; +https://venghaber.com)',
-			'sslverify'  => $feed['sslverify'] ?? true,
-		) );
-		if ( is_wp_error( $res ) || wp_remote_retrieve_response_code( $res ) !== 200 ) {
-			continue;
-		}
-		$type = $feed['type'] ?? 'rss';
-		$parser = 'veng_oh_parse_feed';
-		if ( 'newssitemap' === $type ) {
-			$parser = 'veng_oh_parse_newssitemap';
-		} elseif ( 'rudaw_embedded' === $type ) {
-			$parser = 'veng_oh_parse_rudaw_embedded';
-		} elseif ( 'mezopotamya_embedded' === $type ) {
-			$parser = 'veng_oh_parse_mezopotamya';
-		} elseif ( 'channel8_sitemap' === $type ) {
-			$parser = 'veng_oh_parse_channel8_sitemap';
-		}
-		$items = array_slice( $parser( wp_remote_retrieve_body( $res ) ), 0, 25 );
-		foreach ( $items as $item ) {
-			if ( $created >= $max_imports_per_run ) {
-				break;
-			}
-			if ( veng_oh_already_imported( $item['link'] ) ) {
-				continue;
-			}
-			$slug = veng_oh_classify_category_slug( $item['title'], $item['summary'], $feed['category'] );
-			if ( ! isset( $needs[ $slug ] ) || $needs[ $slug ] <= 0 ) {
-				continue;
-			}
-			if ( veng_oh_import_item( $item, $feed ) ) {
-				$created++;
-				$needs[ $slug ]--;
-				if ( $needs[ $slug ] <= 0 ) {
-					unset( $needs[ $slug ] );
-				}
-			}
-		}
-	}
-
-	return array( 'created' => $created, 'done' => empty( $needs ) );
-}
-
-/**
- * Kullanıcı "acil, tek seferlik" istedi ama önceki tur bir turda 0 yeni haber bulunca
- * (ör. o anki adaylar tükendi) kendini "tamamlandı" işaretlemiş olabilir. Bir kerelik
- * bayrağı sıfırlayıp daha büyük batch'le (6) tekrar dener.
- */
-function veng_oh_restart_emergency_fill_v2() {
-	if ( '1' !== get_option( 'veng_oh_emergency_fill_v2_restarted' ) ) {
-		update_option( 'veng_oh_emergency_fill_2026_10_done', '0' );
-		update_option( 'veng_oh_emergency_fill_2026_10_attempts', 0 );
-		update_option( 'veng_oh_emergency_fill_v2_restarted', '1' );
-	}
-}
-add_action( 'plugins_loaded', 'veng_oh_restart_emergency_fill_v2', 4 );
-
-function veng_oh_maybe_run_emergency_fill() {
-	if ( ! is_admin() || '1' === get_option( 'veng_oh_emergency_fill_2026_10_done' ) ) {
-		return;
-	}
-	if ( isset( $_GET['action'] ) && 'activate' === $_GET['action'] ) {
-		return;
-	}
-
-	// Kullanıcı acil/tek seferlik istedi — sayfa yüklemesi başına 6'ya çıkarıldı (önceki
-	// 3'ten) ki birkaç admin sayfası gezince hızlıca tamamlansın. Yine de tek istekte
-	// hepsini birden yapmıyor (502 riski), 40 denemeyle toplamda 240 habere kadar çıkabilir.
-	$attempts = (int) get_option( 'veng_oh_emergency_fill_2026_10_attempts', 0 );
-	$result = veng_oh_run_emergency_category_fill( 6 );
-	$attempts++;
-	update_option( 'veng_oh_emergency_fill_2026_10_attempts', $attempts );
-
-	$cumulative = (int) get_option( 'veng_oh_emergency_fill_2026_10_created', 0 );
-	$cumulative += $result['created'];
-	update_option( 'veng_oh_emergency_fill_2026_10_created', $cumulative );
-	update_option( 'veng_oh_emergency_fill_2026_10_time', current_time( 'mysql' ) );
-
-	if ( $result['done'] || 0 === $result['created'] || $attempts >= 40 ) {
-		update_option( 'veng_oh_emergency_fill_2026_10_done', '1' );
-	}
-}
-add_action( 'plugins_loaded', 'veng_oh_maybe_run_emergency_fill' );
-
-/**
- * Günlük sınır (50) devreye girerken mevcut tüm otomatik haberler sıfırdan baştan
- * temizleniyor — v1 temizliği zaten tamamlanmış kurulumlarda da bir kerelik tekrar
- * tetiklemek için v1 bayrağını sıfırlar, var olan parça parça temizleme mekanizması
- * (veng_oh_maybe_run_pending_wipe) bunu otomatik devralır.
- */
-function veng_oh_trigger_fresh_restart() {
-	if ( '1' === get_option( 'veng_oh_fresh_restart_2026_09_done' ) ) {
-		return;
-	}
-	delete_option( 'veng_oh_full_wipe_v1_done' );
-	update_option( 'veng_oh_fresh_restart_2026_09_done', '1' );
-}
-add_action( 'plugins_loaded', 'veng_oh_trigger_fresh_restart', 5 );
 
 function veng_oh_activate() {
 	if ( ! wp_next_scheduled( 'veng_oh_import_event' ) ) {
