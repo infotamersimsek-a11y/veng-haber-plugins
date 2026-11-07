@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Oto Haber AI
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.60
+ * Version: 1.0.61
  * Author: Veng Haber
  */
 
@@ -519,6 +519,31 @@ function veng_oh_record_usage( $model, $purpose, $response_body ) {
 	$usage[ $day ][ $key ]['out'] += (int) ( $data['usage']['output_tokens'] ?? 0 );
 	krsort( $usage );
 	update_option( 'veng_oh_usage', array_slice( $usage, 0, 14, true ), false );
+
+	$p     = veng_oh_price_per_mtok( $model );
+	$month = veng_oh_month_spend();
+	$month['cost'] += (int) ( $data['usage']['input_tokens'] ?? 0 ) / 1e6 * $p[0] + (int) ( $data['usage']['output_tokens'] ?? 0 ) / 1e6 * $p[1];
+	update_option( 'veng_oh_usage_month', $month, false );
+}
+
+/** Bu ayın tahmini toplam harcaması (ay değişince sıfırlanır). */
+function veng_oh_month_spend() {
+	$ym    = current_time( 'Y-m' );
+	$month = get_option( 'veng_oh_usage_month', array() );
+	if ( ! is_array( $month ) || ( $month['ym'] ?? '' ) !== $ym ) {
+		$month = array( 'ym' => $ym, 'cost' => 0.0 );
+	}
+	return $month;
+}
+
+function veng_oh_monthly_budget() {
+	return max( 1.0, (float) get_option( 'veng_oh_monthly_budget', 60 ) );
+}
+
+/** Aylık bütçe dolduysa true: bu durumda yeni haber üretimi (Claude çağrısı) tamamen durur. */
+function veng_oh_budget_exceeded() {
+	$month = veng_oh_month_spend();
+	return $month['cost'] >= veng_oh_monthly_budget();
 }
 
 /** Tahmini USD/1M token (girdi, çıktı). Kesin rakam için Console'a bak. */
@@ -529,6 +554,16 @@ function veng_oh_price_per_mtok( $model ) {
 function veng_oh_render_usage() {
 	$usage = get_option( 'veng_oh_usage', array() );
 	echo '<h2>Claude Kullanımı (son 7 gün)</h2>';
+	$month  = veng_oh_month_spend();
+	$budget = veng_oh_monthly_budget();
+	$pct    = min( 100, (int) round( $month['cost'] / $budget * 100 ) );
+	echo '<p><strong>Bu ay (tahmini):</strong> $' . esc_html( number_format( $month['cost'], 2 ) ) . ' / $' . esc_html( number_format( $budget, 2 ) ) . ' bütçe (%' . esc_html( $pct ) . ')';
+	if ( $month['cost'] >= $budget ) {
+		echo ' <span style="color:#991b1b;font-weight:700;">— BÜTÇE DOLDU, yeni haber üretimi ay sonuna kadar durdu.</span>';
+	} elseif ( $pct >= 80 ) {
+		echo ' <span style="color:#b45309;font-weight:700;">— bütçenin %80\'i aşıldı.</span>';
+	}
+	echo '</p>';
 	if ( empty( $usage ) || ! is_array( $usage ) ) {
 		echo '<p>Henüz kayıt yok (bu sürümden sonraki çağrılar sayılır).</p>';
 		return;
@@ -1046,6 +1081,17 @@ function veng_oh_run_import_locked() {
 			'time'    => current_time( 'mysql' ),
 			'created' => 0,
 			'lines'   => array( 'Çalışma saatleri dışında (06:00–22:00), tarama atlandı.' ),
+		) );
+		return 0;
+	}
+
+	// Aylık Claude bütçesi dolduysa HİÇBİR şey yapma: Claude'suz devam etmek haberleri ham
+	// özetle yayınlamak demek (özgün değil), o yüzden üretim ay sonuna kadar durur.
+	if ( veng_oh_budget_exceeded() ) {
+		update_option( 'veng_oh_last_run', array(
+			'time'    => current_time( 'mysql' ),
+			'created' => 0,
+			'lines'   => array( 'Aylık Claude bütçesi doldu ($' . number_format( veng_oh_monthly_budget(), 2 ) . '), tarama atlandı. Ayarlardan bütçeyi artırabilirsin.' ),
 		) );
 		return 0;
 	}
@@ -1683,6 +1729,7 @@ function veng_oh_settings_page() {
 	if ( isset( $_POST['veng_oh_save_settings'] ) && check_admin_referer( 'veng_oh_settings' ) ) {
 		update_option( 'veng_oh_anthropic_api_key', sanitize_text_field( wp_unslash( $_POST['veng_oh_anthropic_api_key'] ?? '' ) ) );
 		update_option( 'veng_oh_auto_publish', isset( $_POST['veng_oh_auto_publish'] ) ? '1' : '0' );
+		update_option( 'veng_oh_monthly_budget', max( 1, (float) ( $_POST['veng_oh_monthly_budget'] ?? 60 ) ) );
 		// Mezopotamya Ajansı sık sık engellenip alan adı değiştiriyor — otomatik takip
 		// mekanizması bilinçli kurulmadı (mahkeme kararlarını atlatmak olurdu), onun yerine
 		// site sahibi yeni adresi buradan kendisi girer.
@@ -1769,6 +1816,13 @@ function veng_oh_settings_page() {
 					<th>Otomatik yayınla</th>
 					<td>
 						<label><input type="checkbox" name="veng_oh_auto_publish" <?php checked( $auto_publish ); ?> /> Çekilen haberleri direkt yayınla (kapalıysa taslak olarak eklenir)</label>
+					</td>
+				</tr>
+				<tr>
+					<th><label for="veng_oh_monthly_budget">Aylık Claude bütçesi ($)</label></th>
+					<td>
+						<input type="number" step="1" min="1" id="veng_oh_monthly_budget" name="veng_oh_monthly_budget" value="<?php echo esc_attr( veng_oh_monthly_budget() ); ?>" class="small-text" />
+						<p class="description">Tahmini aylık harcama bu rakama ulaşınca yeni haber üretimi ay sonuna kadar durur. Eklentinin kendi sayacına göredir (yaklaşık); Anthropic Console'daki harcama sınırını da ayrıca koy.</p>
 					</td>
 				</tr>
 				<tr>
