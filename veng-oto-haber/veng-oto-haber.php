@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Oto Haber AI
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.63
+ * Version: 1.0.64
  * Author: Veng Haber
  */
 
@@ -1784,10 +1784,7 @@ function veng_oh_settings_page() {
 				<?php endif; ?>
 			</p>
 		</form>
-		<?php veng_oh_render_usage(); ?>
-		</div>
-		<div>
-		<h2>Durum</h2>
+		<h2 style="margin-top:24px;">Durum</h2>
 		<?php $last_api_error = get_option( 'veng_oh_last_api_error' ); ?>
 		<?php if ( $last_api_error && ! empty( $last_api_error['reason'] ) ) : ?>
 			<p style="background:#fef2f2;border:1px solid #fecaca;padding:10px 14px;border-radius:6px;">
@@ -1829,7 +1826,11 @@ function veng_oh_settings_page() {
 		</table>
 		<p class="description">* Amedspor/bölge kulüpleri, günlük 30 sınırının dışında ek hak. Saat başı çalışır (<?php echo esc_html( VENG_OH_ACTIVE_HOUR_START ); ?>:00–<?php echo esc_html( VENG_OH_ACTIVE_HOUR_END ); ?>:00), turda en fazla <?php echo esc_html( VENG_OH_RUN_CAP ); ?> haber. Sıradaki: <?php echo $next_cron ? esc_html( date_i18n( 'd.m.Y H:i', $next_cron ) ) : 'planlanmadı'; ?><?php echo $last ? ' · Son tarama: ' . esc_html( $last['time'] ) . ' (' . intval( $last['created'] ) . ' yeni)' : ' · Henüz tarama çalışmadı'; ?></p>
 
-		<h3 style="margin-bottom:6px;">Kaynaklar <span style="font-weight:400;font-size:12px;">(bugün yayın / son taramada aday)</span></h3>
+		</div>
+		<div>
+		<?php veng_oh_render_usage(); ?>
+
+		<h3 style="margin:22px 0 6px;">Kaynaklar <span style="font-weight:400;font-size:12px;">(bugün yayın / son taramada aday)</span></h3>
 		<table class="widefat striped" style="font-size:12.5px;">
 			<tbody>
 			<?php foreach ( array_chunk( $known_sources, 2 ) as $row_sources ) : ?>
