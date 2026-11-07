@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Oto Haber AI
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.65
+ * Version: 1.0.66
  * Author: Veng Haber
  */
 
@@ -553,35 +553,78 @@ function veng_oh_price_per_mtok( $model ) {
 
 function veng_oh_render_usage() {
 	$usage  = get_option( 'veng_oh_usage', array() );
+	$usage  = is_array( $usage ) ? $usage : array();
 	$month  = veng_oh_month_spend();
 	$budget = veng_oh_monthly_budget();
 	$pct    = min( 100, (int) round( $month['cost'] / $budget * 100 ) );
 	$class  = $pct >= 100 ? 'bad' : ( $pct >= 80 ? 'warn' : '' );
-	echo '<div class="vo-budget"><strong>$' . esc_html( number_format( $month['cost'], 2 ) ) . '</strong><span>bu ay (tahmini) · bütçe $' . esc_html( number_format( $budget, 0 ) ) . ' · %' . esc_html( $pct ) . '</span></div>';
-	echo '<div class="vo-bar ' . esc_attr( $class ) . '"><i style="width:' . esc_attr( $pct ) . '%"></i></div>';
-	if ( $month['cost'] >= $budget ) {
-		echo '<div class="vo-alert"><strong>Bütçe doldu</strong>Yeni haber üretimi ay sonuna kadar durdu. Ayarlardan bütçeyi artırabilirsin.</div>';
-	} elseif ( $pct >= 80 ) {
-		echo '<div class="vo-alert" style="background:#fffbeb;border-color:#fde68a;color:#92400e;"><strong>Bütçenin %80\'i aşıldı</strong>Ay sonuna kadar yetmeyebilir.</div>';
-	}
-	if ( empty( $usage ) || ! is_array( $usage ) ) {
-		echo '<div class="vo-empty">Henüz kayıt yok. Sayaç, güncellemeden sonraki Claude çağrılarını sayar.</div>';
-		return;
-	}
+	$dom    = max( 1, (int) current_time( 'j' ) );
+	$dim    = (int) current_time( 't' );
+	$proj   = $month['cost'] / $dom * $dim;
+
 	krsort( $usage );
-	echo '<table class="vo-table"><thead><tr><th>Gün</th><th>İş / model</th><th>Çağrı</th><th>Girdi</th><th>Çıktı</th><th>Tahmini $</th></tr></thead><tbody>';
+	$by_purpose = array();
+	$days       = array();
 	foreach ( array_slice( $usage, 0, 7, true ) as $day => $rows ) {
-		$day_cost = 0.0;
+		$d = array( 'calls' => 0, 'in' => 0, 'out' => 0, 'cost' => 0.0 );
 		foreach ( $rows as $key => $r ) {
 			list( $purpose, $model ) = array_pad( explode( '|', $key, 2 ), 2, '' );
 			$p    = veng_oh_price_per_mtok( $model );
 			$cost = $r['in'] / 1e6 * $p[0] + $r['out'] / 1e6 * $p[1];
-			$day_cost += $cost;
-			echo '<tr><td>' . esc_html( substr( $day, 5 ) ) . '</td><td>' . esc_html( $purpose ) . ' <span style="color:#94a3b8">· ' . esc_html( str_replace( 'claude-', '', $model ) ) . '</span></td><td>' . esc_html( number_format_i18n( $r['calls'] ) ) . '</td><td>' . esc_html( number_format_i18n( $r['in'] ) ) . '</td><td>' . esc_html( number_format_i18n( $r['out'] ) ) . '</td><td>$' . esc_html( number_format( $cost, 2 ) ) . '</td></tr>';
+			$by_purpose[ $purpose ] = ( $by_purpose[ $purpose ] ?? 0 ) + $cost;
+			$d['calls'] += $r['calls'];
+			$d['in']    += $r['in'];
+			$d['out']   += $r['out'];
+			$d['cost']  += $cost;
 		}
-		echo '<tr class="tot"><td colspan="5">' . esc_html( substr( $day, 5 ) ) . ' toplam</td><td>$' . esc_html( number_format( $day_cost, 2 ) ) . '</td></tr>';
+		$days[ $day ] = $d;
 	}
-	echo '</tbody></table><p class="vo-hint">Rakamlar tahmindir; esas olan console.anthropic.com faturasıdır.</p>';
+	arsort( $by_purpose );
+	$total7 = array_sum( $by_purpose );
+	$colors = array( 'yeniden-yaz' => '#7c5cff', 'harman' => '#22d3ee', 'gruplama' => '#f59e0b' );
+	$k      = function ( $n ) {
+		return $n >= 1000 ? number_format( $n / 1000, $n >= 100000 ? 0 : 1 ) . 'K' : (string) (int) $n;
+	};
+	?>
+	<div class="vo-usage">
+		<div class="vo-donut" style="--p:<?php echo esc_attr( $pct ); ?>">
+			<svg viewBox="0 0 100 100" aria-hidden="true"><circle class="bg" cx="50" cy="50" r="42"/><circle class="fg <?php echo esc_attr( $class ); ?>" cx="50" cy="50" r="42"/></svg>
+			<div class="mid"><b>$<?php echo esc_html( number_format( $month['cost'], 2 ) ); ?></b><small>%<?php echo esc_html( $pct ); ?> kullanıldı</small></div>
+		</div>
+		<div class="vo-ustats">
+			<div><small>Aylık bütçe</small><b>$<?php echo esc_html( number_format( $budget, 0 ) ); ?></b></div>
+			<div><small>Kalan</small><b>$<?php echo esc_html( number_format( max( 0, $budget - $month['cost'] ), 2 ) ); ?></b></div>
+			<div><small>Ay sonu tahmini</small><b class="<?php echo $proj > $budget ? 'vo-no' : 'vo-ok'; ?>">$<?php echo esc_html( number_format( $proj, 0 ) ); ?></b></div>
+		</div>
+	</div>
+	<?php if ( $month['cost'] >= $budget ) : ?>
+		<div class="vo-alert"><strong>Bütçe doldu</strong>Yeni haber üretimi ay sonuna kadar durdu.</div>
+	<?php elseif ( $pct >= 80 ) : ?>
+		<div class="vo-alert warn"><strong>Bütçenin %80'i aşıldı</strong>Ay sonuna kadar yetmeyebilir.</div>
+	<?php endif; ?>
+	<?php if ( $by_purpose && $total7 > 0 ) : ?>
+		<div class="vo-stack">
+			<?php foreach ( $by_purpose as $pname => $pcost ) : ?>
+				<i style="--w:<?php echo esc_attr( round( $pcost / $total7 * 100, 1 ) ); ?>%;background:<?php echo esc_attr( $colors[ $pname ] ?? '#94a3b8' ); ?>" title="<?php echo esc_attr( $pname . ' $' . number_format( $pcost, 2 ) ); ?>"></i>
+			<?php endforeach; ?>
+		</div>
+		<div class="vo-legend">
+			<?php foreach ( $by_purpose as $pname => $pcost ) : ?>
+				<span><i style="background:<?php echo esc_attr( $colors[ $pname ] ?? '#94a3b8' ); ?>"></i><?php echo esc_html( $pname ); ?> <b>$<?php echo esc_html( number_format( $pcost, 2 ) ); ?></b></span>
+			<?php endforeach; ?>
+		</div>
+		<table class="vo-table">
+			<thead><tr><th>Gün</th><th>Çağrı</th><th>Girdi</th><th>Çıktı</th><th>Tahmini $</th></tr></thead>
+			<tbody>
+				<?php foreach ( array_slice( $days, 0, 4, true ) as $day => $d ) : ?>
+					<tr><td><?php echo esc_html( substr( $day, 5 ) ); ?></td><td><?php echo esc_html( $d['calls'] ); ?></td><td><?php echo esc_html( $k( $d['in'] ) ); ?></td><td><?php echo esc_html( $k( $d['out'] ) ); ?></td><td><b>$<?php echo esc_html( number_format( $d['cost'], 2 ) ); ?></b></td></tr>
+				<?php endforeach; ?>
+			</tbody>
+		</table>
+	<?php else : ?>
+		<div class="vo-empty">Henüz kayıt yok. Sayaç, güncellemeden sonraki Claude çağrılarını sayar.</div>
+	<?php endif; ?>
+	<?php
 }
 
 /** Kaynak haberi Veng Haber editöryel kurallarına göre kendi cümleleriyle yeniden yazar. */
@@ -1768,194 +1811,253 @@ function veng_oh_settings_page() {
 	$mpct    = $pct( $month['cost'], $budget );
 	$mclass  = $mpct >= 100 ? 'bad' : ( $mpct >= 80 ? 'warn' : '' );
 	$regions = array(
-		array( 'Kürt bölgesi', (int) $dc['kurdish'], VENG_OH_KURDISH_DAILY_MIN ),
-		array( 'Dünya', (int) $dc['world'], VENG_OH_WORLD_DAILY_CAP ),
-		array( 'Diğer', (int) $dc['other'], VENG_OH_DAILY_CAP ),
-		array( 'Bölge spor', (int) ( $dc['bolge_spor'] ?? 0 ), VENG_OH_REGIONAL_SPORTS_DAILY_CAP ),
+		array( 'Kürt bölgesi', (int) $dc['kurdish'], VENG_OH_KURDISH_DAILY_MIN, 'hedef' ),
+		array( 'Dünya', (int) $dc['world'], VENG_OH_WORLD_DAILY_CAP, 'tavan' ),
+		array( 'Diğer', (int) $dc['other'], VENG_OH_DAILY_CAP, '' ),
+		array( 'Bölge spor', (int) ( $dc['bolge_spor'] ?? 0 ), VENG_OH_REGIONAL_SPORTS_DAILY_CAP, 'ek hak' ),
 	);
+	$sel_show = array_slice( $sel_lines, 0, 4 );
 	?>
 	<div class="wrap vo">
+		<hr class="wp-header-end" style="display:none">
 		<style>
-			.vo{--ink:#0f172a;--mut:#64748b;--line:#e8ebf4;--card:#fff;--acc:#7c5cff;--acc2:#22d3ee;--ok:#10b981;--warn:#f59e0b;--bad:#ef4444;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--ink);max-width:1480px;margin-top:18px}
+			html.wp-toolbar,body{overflow:hidden}
+			#wpfooter{display:none}
+			#wpbody-content{padding-bottom:0}
+			.vo{--ink:#0f172a;--mut:#64748b;--line:#e8ebf4;--card:#fff;--acc:#7c5cff;--acc2:#22d3ee;--ok:#10b981;--warn:#f59e0b;--bad:#ef4444;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--ink);font-size:12.5px;margin:12px 18px 0 6px;height:calc(100vh - 32px - 24px);display:flex;flex-direction:column;gap:14px;overflow:hidden}
 			.vo *{box-sizing:border-box}
-			.vo-hero{position:relative;overflow:hidden;border-radius:24px;padding:32px 36px 28px;color:#fff;background:radial-gradient(900px 380px at 85% -10%,rgba(124,92,255,.6),transparent 60%),radial-gradient(700px 320px at -5% 115%,rgba(34,211,238,.3),transparent 60%),linear-gradient(135deg,#0a0e24 0%,#141a4a 55%,#2a1672 100%);box-shadow:0 28px 64px -26px rgba(32,24,120,.6)}
-			.vo-hero:after{content:"";position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.045) 1px,transparent 1px);background-size:34px 34px;-webkit-mask-image:linear-gradient(180deg,#000,transparent 85%);mask-image:linear-gradient(180deg,#000,transparent 85%);pointer-events:none}
+			@keyframes vo-up{from{opacity:0;transform:translateY(16px) scale(.985)}to{opacity:1;transform:none}}
+			@keyframes vo-grow{from{width:0}to{width:var(--w)}}
+			@keyframes vo-shine{to{transform:translateX(100%)}}
+			@keyframes vo-ping{0%{box-shadow:0 0 0 0 rgba(16,185,129,.55)}80%,100%{box-shadow:0 0 0 9px rgba(16,185,129,0)}}
+			@keyframes vo-aurora{0%{background-position:0% 40%}100%{background-position:100% 60%}}
+			@keyframes vo-float{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(30px,-18px) scale(1.12)}}
+			@keyframes vo-pop{from{opacity:0;transform:scale(.8)}to{opacity:1;transform:none}}
+			@keyframes vo-slide{from{opacity:0;transform:translateX(18px)}to{opacity:1;transform:none}}
+			@keyframes vo-dash{from{stroke-dasharray:0 264}}
+			@keyframes vo-toast{0%{opacity:0;transform:translateY(-12px)}6%{opacity:1;transform:none}88%{opacity:1}100%{opacity:0;visibility:hidden;pointer-events:none}}
+			.vo .notice{position:fixed;top:46px;right:24px;z-index:100000;width:min(420px,90vw);margin:0;padding:12px 16px;border-radius:14px;border:0;border-left:4px solid var(--acc);box-shadow:0 20px 40px -16px rgba(15,23,42,.45);animation:vo-toast 7s ease forwards}
+			#wpbody-content>.notice{position:fixed;top:46px;right:24px;z-index:100000;width:min(420px,90vw);margin:0;border-radius:14px;box-shadow:0 20px 40px -16px rgba(15,23,42,.45);animation:vo-toast 7s ease forwards}
+
+			.vo-hero{flex:none;position:relative;overflow:hidden;border-radius:22px;padding:18px 26px 18px;color:#fff;background:radial-gradient(700px 300px at 85% -20%,rgba(124,92,255,.65),transparent 60%),radial-gradient(600px 260px at 0% 120%,rgba(34,211,238,.32),transparent 60%),linear-gradient(120deg,#070a1c,#141a4a,#2a1672,#0f1d5e);background-size:100% 100%,100% 100%,240% 240%;animation:vo-aurora 14s ease-in-out infinite alternate;box-shadow:0 24px 56px -26px rgba(32,24,120,.65)}
+			.vo-hero:after{content:"";position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.04) 1px,transparent 1px);background-size:32px 32px;-webkit-mask-image:linear-gradient(180deg,#000,transparent 90%);mask-image:linear-gradient(180deg,#000,transparent 90%);pointer-events:none}
 			.vo-hero>*{position:relative;z-index:1}
-			.vo-top{display:flex;justify-content:space-between;gap:22px;flex-wrap:wrap;align-items:flex-start}
-			.vo-kicker{display:inline-flex;gap:10px;align-items:center;font-size:11px;letter-spacing:.24em;font-weight:700;color:#b9c3ff;text-transform:uppercase}
-			.vo-kicker i{width:24px;height:2px;background:linear-gradient(90deg,var(--acc2),var(--acc));border-radius:2px}
-			.vo h1.vo-title{font-size:36px;line-height:1.08;margin:12px 0 10px;padding:0;color:#fff;font-weight:800;letter-spacing:-.025em}
-			.vo-sub{margin:0;max-width:640px;color:#c7cdf0;font-size:13.5px;line-height:1.65}
-			.vo-pills{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
-			.vo-pill{display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border-radius:999px;font-size:12px;font-weight:600;background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.17);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);color:#e8ebff}
+			.vo-orb{position:absolute!important;border-radius:50%;filter:blur(40px);opacity:.5;pointer-events:none;animation:vo-float 11s ease-in-out infinite}
+			.vo-orb.a{width:220px;height:220px;right:12%;top:-90px;background:#7c5cff}
+			.vo-orb.b{width:180px;height:180px;left:30%;bottom:-100px;background:#22d3ee;animation-delay:-5s}
+			.vo-top{display:flex;justify-content:space-between;gap:18px;align-items:center}
+			.vo-kicker{display:inline-flex;gap:10px;align-items:center;font-size:10px;letter-spacing:.26em;font-weight:700;color:#b9c3ff;text-transform:uppercase}
+			.vo-kicker i{width:22px;height:2px;background:linear-gradient(90deg,var(--acc2),var(--acc));border-radius:2px}
+			.vo h1.vo-title{font-size:28px;line-height:1.1;margin:7px 0 5px;padding:0;color:#fff;font-weight:800;letter-spacing:-.025em;background:linear-gradient(90deg,#fff 40%,#b9c3ff);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+			.vo-sub{margin:0;max-width:560px;color:#c7cdf0;font-size:12px;line-height:1.55}
+			.vo-right{display:flex;align-items:center;gap:16px}
+			.vo-pills{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end;max-width:330px}
+			.vo-pill{display:inline-flex;align-items:center;gap:7px;padding:6px 12px;border-radius:999px;font-size:11.5px;font-weight:600;background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.17);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);color:#e8ebff;cursor:default;font-family:inherit}
+			button.vo-pill{cursor:pointer}button.vo-pill:hover{background:rgba(255,255,255,.17)}
 			.vo-pill b{font-weight:700;color:#fff}
-			.vo-dot{width:8px;height:8px;border-radius:50%;background:#94a3b8;box-shadow:0 0 0 3px rgba(148,163,184,.25)}
-			.vo-dot.ok{background:var(--ok);box-shadow:0 0 0 3px rgba(16,185,129,.28)}
+			.vo-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#94a3b8;flex:none}
+			.vo-dot.ok{background:var(--ok);animation:vo-ping 2s infinite}
 			.vo-dot.bad{background:var(--bad);box-shadow:0 0 0 3px rgba(239,68,68,.3)}
-			.vo-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-top:28px}
-			.vo-kpi{padding:17px 19px;border-radius:18px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
-			.vo-kpi small{display:block;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:#aab4ee;font-weight:700}
-			.vo-kpi strong{display:block;margin:7px 0 11px;font-size:30px;line-height:1;font-weight:800;letter-spacing:-.025em;font-variant-numeric:tabular-nums}
-			.vo-kpi strong span{font-size:14px;color:#aab4ee;font-weight:600;margin-left:4px;letter-spacing:0}
-			.vo-kpi .vo-sm{display:block;font-size:11.5px;color:#aab4ee;margin-top:-2px}
-			.vo-bar{height:6px;border-radius:99px;background:rgba(255,255,255,.15);overflow:hidden}
-			.vo-bar>i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--acc2),var(--acc));transition:width .9s cubic-bezier(.2,.8,.2,1)}
+			.vo-ring{position:relative;width:78px;height:78px;flex:none}
+			.vo-ring svg{width:100%;height:100%;transform:rotate(-90deg)}
+			.vo-ring circle{fill:none;stroke-width:7;stroke-linecap:round}
+			.vo-ring .bg{stroke:rgba(255,255,255,.14)}
+			.vo-ring .fg{stroke:url(#vo-g);transition:stroke-dasharray 1s linear}
+			.vo-ring .mid{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.15}
+			.vo-ring .mid b{font-size:14px;font-weight:800;font-variant-numeric:tabular-nums}
+			.vo-ring .mid small{font-size:8.5px;letter-spacing:.14em;text-transform:uppercase;color:#aab4ee;font-weight:700}
+			.vo-kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-top:14px}
+			.vo-kpi{padding:11px 14px;border-radius:15px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);animation:vo-up .7s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--i,0)*90ms + 150ms);transition:transform .25s,background .25s}
+			.vo-kpi:hover{transform:translateY(-3px);background:rgba(255,255,255,.12)}
+			.vo-kpi small{display:block;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:#aab4ee;font-weight:700}
+			.vo-kpi strong{display:block;margin:4px 0 8px;font-size:24px;line-height:1;font-weight:800;letter-spacing:-.025em;font-variant-numeric:tabular-nums}
+			.vo-kpi strong span{font-size:12px;color:#aab4ee;font-weight:600;margin-left:4px;letter-spacing:0}
+			.vo-kpi .vo-sm{display:block;font-size:10.5px;color:#aab4ee;margin-top:-3px}
+			.vo-bar{position:relative;height:6px;border-radius:99px;background:rgba(255,255,255,.15);overflow:hidden}
+			.vo-bar>i{position:relative;display:block;width:var(--w);height:100%;border-radius:99px;background:linear-gradient(90deg,var(--acc2),var(--acc));overflow:hidden;animation:vo-grow 1.2s .35s cubic-bezier(.2,.8,.2,1) both}
+			.vo-bar>i:after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.6),transparent);transform:translateX(-100%);animation:vo-shine 2.6s 1.6s infinite}
 			.vo-bar.warn>i{background:linear-gradient(90deg,#fbbf24,#f97316)}
 			.vo-bar.bad>i{background:linear-gradient(90deg,#fb7185,#ef4444)}
-			.vo-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:22px;margin-top:22px;align-items:start}
-			@media (max-width:1100px){.vo-grid{grid-template-columns:minmax(0,1fr)}.vo-pills{justify-content:flex-start}}
-			.vo-col{display:grid;gap:22px;min-width:0}
-			.vo-card{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:26px 28px;box-shadow:0 1px 2px rgba(15,23,42,.04),0 20px 44px -28px rgba(30,41,120,.3)}
-			.vo-card h2{display:flex;align-items:center;gap:10px;margin:0 0 5px;padding:0;font-size:16.5px;font-weight:750;letter-spacing:-.01em;color:var(--ink)}
-			.vo-card h2 em{font-style:normal;font-size:10.5px;font-weight:700;color:#5b3df5;background:#efeaff;padding:3px 10px;border-radius:99px;letter-spacing:.06em}
-			.vo-desc{margin:0 0 18px;font-size:12.5px;color:var(--mut);line-height:1.55}
-			.vo-field{margin-bottom:18px}
-			.vo-field label{display:block;font-size:11.5px;font-weight:700;color:#334155;margin-bottom:7px;letter-spacing:.04em;text-transform:uppercase}
-			.vo-field input{width:100%;height:46px;border-radius:13px;border:1.5px solid var(--line);background:#f8f9fd;padding:0 15px;font-size:14px;color:var(--ink);box-shadow:none;transition:all .18s}
+
+			.vo-main{flex:1;min-height:0;display:grid;grid-template-columns:1.05fr 1fr 1fr;gap:14px}
+			.vo-col{display:grid;gap:14px;min-width:0;min-height:0;grid-template-rows:auto minmax(0,1fr)}
+			.vo-card{position:relative;min-height:0;overflow:hidden;background:var(--card);border:1px solid var(--line);border-radius:20px;padding:16px 20px;box-shadow:0 1px 2px rgba(15,23,42,.04),0 18px 40px -28px rgba(30,41,120,.35);animation:vo-up .75s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--i,0)*110ms + 250ms);transition:box-shadow .3s,transform .3s}
+			.vo-card:before{content:"";position:absolute;inset:0;border-radius:inherit;background:radial-gradient(260px circle at var(--mx,50%) var(--my,0%),rgba(124,92,255,.11),transparent 70%);opacity:0;transition:opacity .3s;pointer-events:none}
+			.vo-card:hover:before{opacity:1}
+			.vo-card:hover{box-shadow:0 1px 2px rgba(15,23,42,.05),0 26px 50px -26px rgba(60,41,200,.45)}
+			.vo-card>*{position:relative}
+			.vo-card h2{display:flex;align-items:center;gap:9px;margin:0 0 3px;padding:0;font-size:14px;font-weight:750;letter-spacing:-.01em;color:var(--ink)}
+			.vo-card h2 em{font-style:normal;font-size:9.5px;font-weight:700;color:#5b3df5;background:#efeaff;padding:2px 9px;border-radius:99px;letter-spacing:.06em}
+			.vo-desc{margin:0 0 11px;font-size:11.5px;color:var(--mut);line-height:1.5}
+			.vo-field{margin-bottom:11px}
+			.vo-field label{display:block;font-size:10.5px;font-weight:700;color:#334155;margin-bottom:5px;letter-spacing:.05em;text-transform:uppercase}
+			.vo-field input{width:100%;height:38px;border-radius:11px;border:1.5px solid var(--line);background:#f8f9fd;padding:0 13px;font-size:13px;color:var(--ink);box-shadow:none;transition:all .18s}
 			.vo-field input:focus{outline:0;border-color:var(--acc);background:#fff;box-shadow:0 0 0 4px rgba(124,92,255,.16)}
-			.vo-hint{margin:8px 0 0;font-size:12px;color:var(--mut);line-height:1.55}
+			.vo-hint{margin:5px 0 0;font-size:11.5px;color:var(--mut);line-height:1.5}
 			.vo-ok{color:#047857;font-weight:700}.vo-no{color:#be123c;font-weight:700}
-			.vo-row{display:grid;grid-template-columns:150px 1fr;gap:16px;align-items:start}
-			.vo-btns{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px}
-			.vo-btn{appearance:none;border:0;cursor:pointer;height:44px;padding:0 22px;border-radius:13px;font-size:13px;font-weight:700;letter-spacing:.01em;transition:all .18s;font-family:inherit}
-			.vo-btn.pri{color:#fff;background:linear-gradient(135deg,#7c5cff,#5b3df5);box-shadow:0 12px 24px -10px rgba(91,61,245,.85)}
-			.vo-btn.pri:hover{transform:translateY(-1px);box-shadow:0 16px 28px -10px rgba(91,61,245,.95)}
-			.vo-btn.sec{color:#4338ca;background:#eef0ff}.vo-btn.sec:hover{background:#e2e5ff}
+			.vo-row{display:grid;grid-template-columns:120px 1fr;gap:14px;align-items:start}
+			.vo-btns{display:flex;flex-wrap:wrap;gap:8px}
+			.vo-btn{appearance:none;border:0;cursor:pointer;height:38px;padding:0 16px;border-radius:11px;font-size:12px;font-weight:700;letter-spacing:.01em;transition:all .18s;font-family:inherit;position:relative;overflow:hidden}
+			.vo-btn.pri{color:#fff;background:linear-gradient(135deg,#7c5cff,#5b3df5);box-shadow:0 10px 20px -10px rgba(91,61,245,.9)}
+			.vo-btn.pri:after{content:"";position:absolute;inset:0;background:linear-gradient(100deg,transparent 30%,rgba(255,255,255,.35),transparent 70%);transform:translateX(-120%);transition:transform .6s}
+			.vo-btn.pri:hover:after{transform:translateX(120%)}
+			.vo-btn.pri:hover{transform:translateY(-1px);box-shadow:0 14px 24px -10px rgba(91,61,245,.95)}
+			.vo-btn.sec{color:#4338ca;background:#eef0ff}.vo-btn.sec:hover{background:#e2e5ff;transform:translateY(-1px)}
 			.vo-btn.gho{color:#475569;background:#fff;border:1.5px solid var(--line)}.vo-btn.gho:hover{border-color:#cbd5e1;background:#f8fafc}
-			.vo-region{display:grid;gap:15px;margin-top:18px}
-			.vo-r{display:grid;grid-template-columns:110px 1fr 74px;gap:14px;align-items:center;font-size:13px}
+			.vo-region{display:grid;gap:11px;margin-top:6px}
+			.vo-r{display:grid;grid-template-columns:92px 1fr 62px;gap:12px;align-items:center;font-size:12px}
 			.vo-r span{color:#475569;font-weight:600}
 			.vo-r b{font-variant-numeric:tabular-nums;color:var(--ink);font-weight:750;text-align:right}
-			.vo-r b small{color:#94a3b8;font-weight:600;font-size:11px}
+			.vo-r b small{color:#94a3b8;font-weight:600;font-size:10.5px}
 			.vo-card .vo-bar{background:#eceffa;height:8px}
-			.vo-alert{margin:16px 0 0;padding:14px 16px;border-radius:15px;background:#fff1f2;border:1px solid #fecdd3;color:#9f1239;font-size:12.5px;line-height:1.6}
-			.vo-alert strong{display:block;margin-bottom:3px;font-size:13px}
-			.vo-note{margin:18px 0 0;padding-top:15px;border-top:1px dashed var(--line);font-size:12px;color:var(--mut);line-height:1.65}
-			.vo-table{width:100%;border-collapse:separate;border-spacing:0;margin-top:16px;font-size:12.5px}
-			.vo-table th{text-align:left;padding:9px 10px;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#94a3b8;font-weight:700;border-bottom:1px solid var(--line)}
-			.vo-table td{padding:10px;border-bottom:1px solid #f1f3fa;color:#334155;font-variant-numeric:tabular-nums}
-			.vo-table tr.tot td{background:#f5f4ff;font-weight:750;color:#3730a3;border-bottom:0}
-			.vo-table tr.tot td:first-child{border-radius:11px 0 0 11px}.vo-table tr.tot td:last-child{border-radius:0 11px 11px 0}
-			.vo-budget{display:flex;align-items:baseline;justify-content:space-between;margin:18px 0 10px}
-			.vo-budget strong{font-size:28px;font-weight:800;letter-spacing:-.025em}
-			.vo-budget span{color:var(--mut);font-size:13px;font-weight:600}
-			.vo-src-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:10px;margin-top:18px}
-			.vo-src{display:flex;align-items:center;gap:10px;padding:11px 13px;border-radius:13px;background:#f8f9fd;border:1px solid #eef0f8;font-size:12.5px}
-			.vo-src .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;color:#334155}
-			.vo-src .n{font-variant-numeric:tabular-nums;color:var(--mut);font-size:12px;white-space:nowrap}
-			.vo-src .n b{color:var(--ink);font-size:13px}
-			.vo-src .vo-dot{flex:none}
-			.vo-tl{list-style:none;margin:18px 0 0;padding:0;display:grid;gap:10px}
-			.vo-tl li{display:flex;gap:12px;align-items:flex-start;padding:13px 15px;border-radius:14px;background:#f8f9fd;border:1px solid #eef0f8;font-size:13px;line-height:1.5;color:#1e293b;margin:0}
-			.vo-tag{flex:none;margin-top:1px;padding:3px 10px;border-radius:99px;font-size:10.5px;font-weight:700;letter-spacing:.03em;color:#4338ca;background:#e9e8ff;white-space:nowrap}
+			.vo-alert{margin:10px 0 0;padding:9px 12px;border-radius:12px;background:#fff1f2;border:1px solid #fecdd3;color:#9f1239;font-size:11.5px;line-height:1.5}
+			.vo-alert.warn{background:#fffbeb;border-color:#fde68a;color:#92400e}
+			.vo-alert strong{display:block;font-size:12px}
+			.vo-note{margin:10px 0 0;padding-top:10px;border-top:1px dashed var(--line);font-size:11px;color:var(--mut);line-height:1.55}
+			.vo-usage{display:flex;align-items:center;gap:18px;margin-top:6px}
+			.vo-donut{position:relative;width:104px;height:104px;flex:none}
+			.vo-donut svg{width:100%;height:100%;transform:rotate(-90deg)}
+			.vo-donut circle{fill:none;stroke-width:9;stroke-linecap:round}
+			.vo-donut .bg{stroke:#eceffa}
+			.vo-donut .fg{stroke:url(#vo-g2);stroke-dasharray:calc(var(--p)*2.64) 264;animation:vo-dash 1.4s .4s cubic-bezier(.2,.8,.2,1) both}
+			.vo-donut .fg.warn{stroke:#f59e0b}.vo-donut .fg.bad{stroke:#ef4444}
+			.vo-donut .mid{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.2}
+			.vo-donut .mid b{font-size:17px;font-weight:800;letter-spacing:-.02em}
+			.vo-donut .mid small{font-size:9.5px;color:var(--mut);font-weight:600}
+			.vo-ustats{flex:1;display:grid;gap:7px}
+			.vo-ustats div{display:flex;justify-content:space-between;align-items:baseline;padding:6px 11px;border-radius:10px;background:#f8f9fd}
+			.vo-ustats small{font-size:10.5px;color:var(--mut);font-weight:600}
+			.vo-ustats b{font-size:13px;font-weight:800;font-variant-numeric:tabular-nums}
+			.vo-stack{display:flex;gap:2px;height:9px;margin-top:12px;border-radius:99px;overflow:hidden;background:#eceffa}
+			.vo-stack i{display:block;width:var(--w);animation:vo-grow 1.2s .5s cubic-bezier(.2,.8,.2,1) both}
+			.vo-legend{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:7px;font-size:11px;color:#475569}
+			.vo-legend i{display:inline-block;width:8px;height:8px;border-radius:3px;margin-right:5px}
+			.vo-table{width:100%;border-collapse:separate;border-spacing:0;margin-top:8px;font-size:11.5px}
+			.vo-table th{text-align:left;padding:6px 8px;font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:#94a3b8;font-weight:700;border-bottom:1px solid var(--line)}
+			.vo-table td{padding:6px 8px;border-bottom:1px solid #f1f3fa;color:#334155;font-variant-numeric:tabular-nums}
+			.vo-table td:last-child,.vo-table th:last-child{text-align:right}
+			.vo-src-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-top:4px}
+			.vo-src{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;align-items:center;padding:7px 10px;border-radius:11px;background:#f8f9fd;border:1px solid #eef0f8;font-size:11.5px;animation:vo-pop .5s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--n,0)*28ms + 600ms);transition:transform .2s,border-color .2s,background .2s}
+			.vo-src:hover{transform:translateY(-2px);border-color:#cfc6ff;background:#f4f1ff}
+			.vo-src .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;color:#334155}
+			.vo-src .n{font-variant-numeric:tabular-nums;color:var(--mut);font-size:11px;white-space:nowrap}
+			.vo-src .n b{color:var(--ink);font-size:12px}
+			.vo-tl{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:7px}
+			.vo-tl li{display:flex;gap:9px;align-items:center;padding:8px 11px;border-radius:12px;background:#f8f9fd;border:1px solid #eef0f8;font-size:11.5px;line-height:1.35;color:#1e293b;margin:0;min-width:0;animation:vo-slide .55s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--n,0)*110ms + 700ms)}
+			.vo-tl li span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+			.vo-tag{flex:none;padding:2px 9px;border-radius:99px;font-size:9.5px;font-weight:700;letter-spacing:.03em;color:#4338ca;background:#e9e8ff;white-space:nowrap}
 			.vo-tag.sp{color:#047857;background:#d9f7ec}
-			.vo-empty{padding:20px;border-radius:15px;background:#f8f9fd;border:1px dashed #d9def0;color:var(--mut);font-size:13px;text-align:center;margin-top:16px}
-			.vo details summary{cursor:pointer;font-weight:700;font-size:13.5px;color:#334155}
-			.vo-foot{margin:22px 4px 8px;font-size:11.5px;color:#94a3b8;text-align:center}
+			.vo-empty{padding:14px;border-radius:13px;background:#f8f9fd;border:1px dashed #d9def0;color:var(--mut);font-size:12px;text-align:center;margin-top:8px}
+			dialog.vo-dlg{border:0;border-radius:22px;padding:22px 26px;max-width:620px;width:92vw;box-shadow:0 40px 80px -20px rgba(15,23,42,.55);font-family:inherit}
+			dialog.vo-dlg::backdrop{background:rgba(10,14,36,.55);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
+			@media (max-width:1280px),(max-height:720px){
+				html.wp-toolbar,body{overflow:auto}
+				.vo{height:auto;overflow:visible}
+				.vo-main{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+				.vo-kpis{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
+			}
+			@media (max-width:900px){.vo-main{grid-template-columns:minmax(0,1fr)}.vo-top{flex-direction:column;align-items:flex-start}.vo-right{flex-wrap:wrap}}
+			@media (prefers-reduced-motion:reduce){.vo *,.vo *:before,.vo *:after{animation:none!important;transition:none!important}}
 		</style>
 
+		<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+			<linearGradient id="vo-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22d3ee"/><stop offset="1" stop-color="#7c5cff"/></linearGradient>
+			<linearGradient id="vo-g2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22d3ee"/><stop offset="1" stop-color="#7c5cff"/></linearGradient>
+		</defs></svg>
+
 		<header class="vo-hero">
+			<span class="vo-orb a"></span><span class="vo-orb b"></span>
 			<div class="vo-top">
 				<div>
 					<span class="vo-kicker"><i></i>Veng Haber · Otomasyon</span>
 					<h1 class="vo-title">Oto Haber AI</h1>
-					<p class="vo-sub">RSS kaynaklarından haberleri çeker, Claude ile editöryel kurallara göre yeniden yazar ve kategoriye göre yayınlar. Saat başı kendi kendine çalışır (06:00–22:00).</p>
+					<p class="vo-sub">RSS kaynaklarından haber çeker, Claude ile yeniden yazar, kategoriye göre yayınlar. Saat başı çalışır (06:00–22:00).</p>
 				</div>
-				<div class="vo-pills">
-					<span class="vo-pill"><span class="vo-dot <?php echo $api_key && ! $has_api_error ? 'ok' : 'bad'; ?>"></span><?php echo $api_key ? ( $has_api_error ? 'API hatası var' : 'Claude bağlı' ) : 'API anahtarı yok'; ?></span>
-					<span class="vo-pill">Sıradaki <b><?php echo $next_cron ? esc_html( date_i18n( 'H:i', $next_cron ) ) : '—'; ?></b></span>
-					<span class="vo-pill">Son tarama <b><?php echo $last ? esc_html( substr( $last['time'], 11, 5 ) ) . ' · ' . intval( $last['created'] ) . ' yeni' : '—'; ?></b></span>
+				<div class="vo-right">
+					<div class="vo-pills">
+						<span class="vo-pill"><span class="vo-dot <?php echo $api_key && ! $has_api_error ? 'ok' : 'bad'; ?>"></span><?php echo $api_key ? ( $has_api_error ? 'API hatası var' : 'Claude bağlı' ) : 'API anahtarı yok'; ?></span>
+						<span class="vo-pill">Sıradaki <b><?php echo $next_cron ? esc_html( date_i18n( 'H:i', $next_cron ) ) : '—'; ?></b></span>
+						<span class="vo-pill">Son tarama <b><?php echo $last ? esc_html( substr( $last['time'], 11, 5 ) ) . ' · ' . intval( $last['created'] ) . ' yeni' : '—'; ?></b></span>
+						<?php if ( $unmarked_by_author ) : ?>
+							<button type="button" class="vo-pill" onclick="document.getElementById('vo-dlg').showModal()">Eski kayıtlar <b><?php echo esc_html( count( $unmarked_by_author ) ); ?></b></button>
+						<?php endif; ?>
+					</div>
+					<div class="vo-ring" id="vo-ring" data-next="<?php echo (int) $next_cron; ?>">
+						<svg viewBox="0 0 100 100" aria-hidden="true"><circle class="bg" cx="50" cy="50" r="42"/><circle class="fg" id="vo-ring-fg" cx="50" cy="50" r="42" style="stroke-dasharray:0 264"/></svg>
+						<div class="mid"><b id="vo-cd">--:--</b><small>sonraki tarama</small></div>
+					</div>
 				</div>
 			</div>
 			<div class="vo-kpis">
-				<div class="vo-kpi"><small>Bugün eklenen</small><strong><?php echo esc_html( $dc['count'] ); ?><span>/ <?php echo esc_html( VENG_OH_DAILY_CAP ); ?></span></strong><div class="vo-bar"><i style="width:<?php echo esc_attr( $pct( $dc['count'], VENG_OH_DAILY_CAP ) ); ?>%"></i></div></div>
-				<div class="vo-kpi"><small>Kürt bölgesi</small><strong><?php echo esc_html( $dc['kurdish'] ); ?><span>/ <?php echo esc_html( VENG_OH_KURDISH_DAILY_MIN ); ?> hedef</span></strong><div class="vo-bar"><i style="width:<?php echo esc_attr( $pct( $dc['kurdish'], VENG_OH_KURDISH_DAILY_MIN ) ); ?>%"></i></div></div>
-				<div class="vo-kpi"><small>Bölge spor</small><strong><?php echo esc_html( $dc['bolge_spor'] ?? 0 ); ?><span>/ <?php echo esc_html( VENG_OH_REGIONAL_SPORTS_DAILY_CAP ); ?></span></strong><div class="vo-bar"><i style="width:<?php echo esc_attr( $pct( $dc['bolge_spor'] ?? 0, VENG_OH_REGIONAL_SPORTS_DAILY_CAP ) ); ?>%"></i></div></div>
-				<div class="vo-kpi"><small>Bu ay (tahmini)</small><strong>$<?php echo esc_html( number_format( $month['cost'], 2 ) ); ?><span>/ $<?php echo esc_html( number_format( $budget, 0 ) ); ?></span></strong><div class="vo-bar <?php echo esc_attr( $mclass ); ?>"><i style="width:<?php echo esc_attr( $mpct ); ?>%"></i></div></div>
-				<div class="vo-kpi"><small>Toplam otomatik haber</small><strong><?php echo null === $auto_post_count ? '…' : esc_html( number_format_i18n( $auto_post_count ) ); ?></strong><span class="vo-sm"><?php echo null === $auto_post_count ? 'arka planda hesaplanıyor' : 'yayında'; ?></span></div>
+				<div class="vo-kpi" style="--i:0"><small>Bugün eklenen</small><strong><span style="margin:0;font-size:inherit;color:inherit;font-weight:inherit" data-count="<?php echo esc_attr( $dc['count'] ); ?>"><?php echo esc_html( $dc['count'] ); ?></span><span>/ <?php echo esc_html( VENG_OH_DAILY_CAP ); ?></span></strong><div class="vo-bar"><i style="--w:<?php echo esc_attr( $pct( $dc['count'], VENG_OH_DAILY_CAP ) ); ?>%"></i></div></div>
+				<div class="vo-kpi" style="--i:1"><small>Kürt bölgesi</small><strong><span style="margin:0;font-size:inherit;color:inherit;font-weight:inherit" data-count="<?php echo esc_attr( $dc['kurdish'] ); ?>"><?php echo esc_html( $dc['kurdish'] ); ?></span><span>/ <?php echo esc_html( VENG_OH_KURDISH_DAILY_MIN ); ?> hedef</span></strong><div class="vo-bar"><i style="--w:<?php echo esc_attr( $pct( $dc['kurdish'], VENG_OH_KURDISH_DAILY_MIN ) ); ?>%"></i></div></div>
+				<div class="vo-kpi" style="--i:2"><small>Bölge spor</small><strong><span style="margin:0;font-size:inherit;color:inherit;font-weight:inherit" data-count="<?php echo esc_attr( $dc['bolge_spor'] ?? 0 ); ?>"><?php echo esc_html( $dc['bolge_spor'] ?? 0 ); ?></span><span>/ <?php echo esc_html( VENG_OH_REGIONAL_SPORTS_DAILY_CAP ); ?></span></strong><div class="vo-bar"><i style="--w:<?php echo esc_attr( $pct( $dc['bolge_spor'] ?? 0, VENG_OH_REGIONAL_SPORTS_DAILY_CAP ) ); ?>%"></i></div></div>
+				<div class="vo-kpi" style="--i:3"><small>Bu ay (tahmini)</small><strong>$<?php echo esc_html( number_format( $month['cost'], 2 ) ); ?><span>/ $<?php echo esc_html( number_format( $budget, 0 ) ); ?></span></strong><div class="vo-bar <?php echo esc_attr( $mclass ); ?>"><i style="--w:<?php echo esc_attr( $mpct ); ?>%"></i></div></div>
+				<div class="vo-kpi" style="--i:4"><small>Toplam otomatik haber</small><strong><?php if ( null === $auto_post_count ) : ?>…<?php else : ?><span style="margin:0;font-size:inherit;color:inherit;font-weight:inherit" data-count="<?php echo esc_attr( $auto_post_count ); ?>" data-fmt="1"><?php echo esc_html( number_format_i18n( $auto_post_count ) ); ?></span><?php endif; ?></strong><span class="vo-sm"><?php echo null === $auto_post_count ? 'arka planda hesaplanıyor' : 'yayında'; ?></span></div>
 			</div>
 		</header>
 
-		<div class="vo-grid">
+		<div class="vo-main">
 			<div class="vo-col">
-				<section class="vo-card">
+				<section class="vo-card" style="--i:0">
 					<h2>Ayarlar</h2>
 					<p class="vo-desc">Claude bağlantısı ve aylık harcama sınırı.</p>
 					<form method="post">
 						<?php wp_nonce_field( 'veng_oh_settings' ); ?>
 						<div class="vo-field">
 							<label for="veng_oh_anthropic_api_key">Claude (Anthropic) API anahtarı</label>
-							<input type="text" id="veng_oh_anthropic_api_key" name="veng_oh_anthropic_api_key" value="<?php echo esc_attr( $api_key ); ?>" placeholder="sk-ant-..." autocomplete="off" />
-							<p class="vo-hint"><?php if ( $api_key ) : ?><span class="vo-ok">✓ Kayıtlı</span> — yeniden yazma aktif.<?php else : ?><span class="vo-no">✗ Kayıtlı değil</span> — haberler yeniden yazılmadan, ham özetle ekleniyor!<?php endif; ?></p>
+							<input type="password" id="veng_oh_anthropic_api_key" name="veng_oh_anthropic_api_key" value="<?php echo esc_attr( $api_key ); ?>" placeholder="sk-ant-..." autocomplete="off" />
+							<p class="vo-hint"><?php if ( $api_key ) : ?><span class="vo-ok">✓ Kayıtlı</span> — yeniden yazma aktif.<?php else : ?><span class="vo-no">✗ Kayıtlı değil</span> — haberler ham özetle ekleniyor!<?php endif; ?></p>
 						</div>
 						<div class="vo-row">
 							<div class="vo-field">
 								<label for="veng_oh_monthly_budget">Aylık bütçe ($)</label>
 								<input type="number" step="1" min="1" id="veng_oh_monthly_budget" name="veng_oh_monthly_budget" value="<?php echo esc_attr( veng_oh_monthly_budget() ); ?>" />
 							</div>
-							<p class="vo-hint" style="margin-top:28px;">Tahmini harcama bu rakama ulaşınca yeni haber üretimi ay sonuna kadar durur. Eklentinin kendi sayacına göredir; Anthropic Console'daki harcama sınırını da ayrıca koy.</p>
+							<p class="vo-hint" style="margin-top:22px;">Tahmini harcama bu rakama ulaşınca yeni haber üretimi ay sonuna kadar durur. Console'daki harcama sınırını da ayrıca koy.</p>
 						</div>
 						<div class="vo-btns">
 							<button type="submit" name="veng_oh_save_settings" class="vo-btn pri">Ayarları kaydet</button>
 							<button type="submit" name="veng_oh_run_now" class="vo-btn sec">Şimdi çalıştır</button>
-							<button type="submit" name="veng_oh_reset_daily_count" class="vo-btn gho" onclick="return confirm('Bugünkü sayaç (toplam + Kürt/Dünya/Diğer dağılımı) sıfırlanacak. Yazı silinmez, sadece sayaç. Emin misin?');">Günlük sayacı sıfırla</button>
+							<button type="submit" name="veng_oh_reset_daily_count" class="vo-btn gho" onclick="return confirm('Bugünkü sayaç (toplam + Kürt/Dünya/Diğer dağılımı) sıfırlanacak. Yazı silinmez, sadece sayaç. Emin misin?');">Sayacı sıfırla</button>
 							<?php $sputnik = veng_oh_stats_cache_get( 'veng_oh_sputnik_count' ); ?>
 							<?php if ( $sputnik && $sputnik['count'] > 0 ) : ?>
-								<button type="submit" name="veng_oh_delete_sputnik_posts" class="vo-btn gho" onclick="return confirm('<?php echo esc_js( number_format_i18n( $sputnik['count'] ) ); ?> Sputnik kaynaklı haber çöpe taşınacak (kalıcı silinmez, Çöp Kutusu\'ndan geri alınabilir). Emin misin?' );">Sputnik haberlerini çöpe taşı (<?php echo esc_html( number_format_i18n( $sputnik['count'] ) ); ?>)</button>
+								<button type="submit" name="veng_oh_delete_sputnik_posts" class="vo-btn gho" onclick="return confirm('<?php echo esc_js( number_format_i18n( $sputnik['count'] ) ); ?> Sputnik kaynaklı haber çöpe taşınacak (kalıcı silinmez, Çöp Kutusu\'ndan geri alınabilir). Emin misin?' );">Sputnik çöpe (<?php echo esc_html( number_format_i18n( $sputnik['count'] ) ); ?>)</button>
 							<?php endif; ?>
 						</div>
 					</form>
 				</section>
 
-				<section class="vo-card">
+				<section class="vo-card" style="--i:1">
 					<h2>Durum <em>BUGÜN</em></h2>
 					<p class="vo-desc">Günlük sınıra ve bölge hedeflerine göre ilerleme.</p>
 					<?php if ( $has_api_error ) : ?>
-						<div class="vo-alert"><strong>Son API hatası · <?php echo esc_html( $last_api_error['time'] ); ?></strong><?php echo esc_html( $last_api_error['reason'] ); ?><br>"401"/"invalid" geçiyorsa anahtar geçersiz, "429"/"rate" ya da "credit"/"quota" geçiyorsa kota/bakiye bitmiş demektir. console.anthropic.com'dan kontrol et.</div>
+						<div class="vo-alert"><strong>Son API hatası · <?php echo esc_html( $last_api_error['time'] ); ?></strong><?php echo esc_html( mb_substr( $last_api_error['reason'], 0, 150 ) ); ?></div>
 					<?php endif; ?>
 					<div class="vo-region">
 						<?php foreach ( $regions as $rg ) : ?>
 							<div class="vo-r">
 								<span><?php echo esc_html( $rg[0] ); ?></span>
-								<div class="vo-bar"><i style="width:<?php echo esc_attr( $pct( $rg[1], $rg[2] ) ); ?>%"></i></div>
+								<div class="vo-bar"><i style="--w:<?php echo esc_attr( $pct( $rg[1], $rg[2] ) ); ?>%"></i></div>
 								<b><?php echo esc_html( $rg[1] ); ?> <small>/ <?php echo esc_html( $rg[2] ); ?></small></b>
 							</div>
 						<?php endforeach; ?>
 					</div>
-					<p class="vo-note">Kürt bölgesi için hedef alt sınırdır, Dünya için tavan. Amedspor ve bölge kulüpleri haberleri günlük 30 sınırının dışında ek haktır. Turda en fazla <?php echo esc_html( VENG_OH_RUN_CAP ); ?> haber eklenir; sıradaki çalışma <?php echo $next_cron ? esc_html( date_i18n( 'd.m.Y H:i', $next_cron ) ) : 'planlanmadı'; ?>.</p>
+					<p class="vo-note">Kürt bölgesi hedefi alt sınır, Dünya tavandır. Bölge spor, günlük 30 sınırının dışında ek haktır. Turda en fazla <?php echo esc_html( VENG_OH_RUN_CAP ); ?> haber.</p>
 				</section>
 			</div>
 
 			<div class="vo-col">
-				<section class="vo-card">
+				<section class="vo-card" style="--i:2">
 					<h2>Claude kullanımı <em>SON 7 GÜN</em></h2>
 					<?php veng_oh_render_usage(); ?>
 				</section>
 
-				<section class="vo-card">
-					<h2>Kaynaklar <em><?php echo esc_html( count( $known_sources ) ); ?></em></h2>
-					<p class="vo-desc">Bugün yayınlanan / son taramada bulunan aday sayısı.</p>
-					<div class="vo-src-grid">
-						<?php foreach ( $known_sources as $src ) : ?>
-							<?php
-							$err  = ! empty( $cand_by_src[ $src . '|err' ] );
-							$cand = $cand_by_src[ $src ] ?? null;
-							$dot  = $err ? 'bad' : ( $cand ? 'ok' : '' );
-							?>
-							<div class="vo-src">
-								<span class="vo-dot <?php echo esc_attr( $dot ); ?>"></span>
-								<span class="nm" title="<?php echo esc_attr( $src ); ?>"><?php echo esc_html( $src ); ?></span>
-								<span class="n"><b><?php echo esc_html( $source_counts[ $src ] ?? 0 ); ?></b> / <?php echo $err ? '<span style="color:#be123c;">hata</span>' : esc_html( null === $cand ? '-' : $cand ); ?></span>
-							</div>
-						<?php endforeach; ?>
-					</div>
-				</section>
-
-				<section class="vo-card">
+				<section class="vo-card" style="--i:3">
 					<h2>Son taramada seçilenler</h2>
-					<?php if ( $sel_lines ) : ?>
+					<?php if ( $sel_show ) : ?>
 						<ul class="vo-tl">
-							<?php foreach ( $sel_lines as $line ) : ?>
+							<?php foreach ( $sel_show as $n => $line ) : ?>
 								<?php
 								$is_sp = false !== strpos( $line, 'bölge spor' );
 								if ( preg_match( '/^Seçildi \((?:bölge spor, )?\d+ kaynak: (.*?)\): (.*)$/u', $line, $sm ) ) {
@@ -1966,38 +2068,86 @@ function veng_oh_settings_page() {
 									$ttl = $line;
 								}
 								?>
-								<li><span class="vo-tag<?php echo $is_sp ? ' sp' : ''; ?>"><?php echo esc_html( ( $is_sp ? 'Spor · ' : '' ) . $tag ); ?></span><span><?php echo esc_html( $ttl ); ?></span></li>
+								<li style="--n:<?php echo (int) $n; ?>"><span class="vo-tag<?php echo $is_sp ? ' sp' : ''; ?>"><?php echo esc_html( ( $is_sp ? 'Spor · ' : '' ) . $tag ); ?></span><span title="<?php echo esc_attr( $ttl ); ?>"><?php echo esc_html( $ttl ); ?></span></li>
 							<?php endforeach; ?>
 						</ul>
 					<?php else : ?>
 						<div class="vo-empty">Son taramada yeni haber seçilmedi.</div>
 					<?php endif; ?>
 				</section>
+			</div>
 
-				<?php if ( $unmarked_by_author ) : ?>
-					<section class="vo-card">
-						<details>
-							<summary>Botun işaretlemediği yazılar (yazara göre)</summary>
-							<p class="vo-desc" style="margin-top:10px;">"Otomatik haber" etiketi taşımayan yazılar: elle yazılmış ya da eski sistemden kalma olabilir. Otomatik silinmez.</p>
-							<table class="vo-table">
-								<thead><tr><th>Yazar</th><th>Adet</th><th>En eski</th><th>En yeni</th></tr></thead>
-								<tbody>
-									<?php foreach ( $unmarked_by_author as $row ) : $user = get_userdata( $row->post_author ); ?>
-										<tr>
-											<td><?php echo $user ? esc_html( $user->display_name ) . ' (ID ' . intval( $row->post_author ) . ')' : 'Kullanıcı yok (ID ' . intval( $row->post_author ) . ')'; ?></td>
-											<td><?php echo intval( $row->cnt ); ?></td>
-											<td><?php echo esc_html( $row->oldest ); ?></td>
-											<td><?php echo esc_html( $row->newest ); ?></td>
-										</tr>
-									<?php endforeach; ?>
-								</tbody>
-							</table>
-						</details>
-					</section>
-				<?php endif; ?>
+			<div class="vo-col" style="grid-template-rows:minmax(0,1fr)">
+				<section class="vo-card" style="--i:4">
+					<h2>Kaynaklar <em><?php echo esc_html( count( $known_sources ) ); ?></em></h2>
+					<p class="vo-desc">Bugün yayınlanan / son taramada bulunan aday.</p>
+					<div class="vo-src-grid">
+						<?php foreach ( $known_sources as $n => $src ) : ?>
+							<?php
+							$err  = ! empty( $cand_by_src[ $src . '|err' ] );
+							$cand = $cand_by_src[ $src ] ?? null;
+							$dot  = $err ? 'bad' : ( $cand ? 'ok' : '' );
+							?>
+							<div class="vo-src" style="--n:<?php echo (int) $n; ?>">
+								<span class="vo-dot <?php echo esc_attr( $dot ); ?>"></span>
+								<span class="nm" title="<?php echo esc_attr( $src ); ?>"><?php echo esc_html( $src ); ?></span>
+								<span class="n"><b><?php echo esc_html( $source_counts[ $src ] ?? 0 ); ?></b> / <?php echo $err ? '<span style="color:#be123c;">hata</span>' : esc_html( null === $cand ? '-' : $cand ); ?></span>
+							</div>
+						<?php endforeach; ?>
+					</div>
+				</section>
 			</div>
 		</div>
-		<p class="vo-foot">Veng Haber · Oto Haber AI</p>
+
+		<?php if ( $unmarked_by_author ) : ?>
+			<dialog class="vo-dlg" id="vo-dlg">
+				<h2 style="margin:0 0 4px;font-size:16px;">Botun işaretlemediği yazılar</h2>
+				<p class="vo-desc">"Otomatik haber" etiketi taşımayan yazılar: elle yazılmış ya da eski sistemden kalma olabilir. Otomatik silinmez.</p>
+				<table class="vo-table">
+					<thead><tr><th>Yazar</th><th>Adet</th><th>En eski</th><th>En yeni</th></tr></thead>
+					<tbody>
+						<?php foreach ( $unmarked_by_author as $row ) : $user = get_userdata( $row->post_author ); ?>
+							<tr>
+								<td><?php echo $user ? esc_html( $user->display_name ) . ' (ID ' . intval( $row->post_author ) . ')' : 'Kullanıcı yok (ID ' . intval( $row->post_author ) . ')'; ?></td>
+								<td><?php echo intval( $row->cnt ); ?></td>
+								<td><?php echo esc_html( substr( $row->oldest, 0, 10 ) ); ?></td>
+								<td><?php echo esc_html( substr( $row->newest, 0, 10 ) ); ?></td>
+							</tr>
+						<?php endforeach; ?>
+					</tbody>
+				</table>
+				<form method="dialog" style="margin-top:14px;text-align:right;"><button class="vo-btn pri">Kapat</button></form>
+			</dialog>
+		<?php endif; ?>
+
+		<script>
+		(function(){
+			var root=document.querySelector('.vo');if(!root)return;
+			var reduce=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+			root.querySelectorAll('[data-count]').forEach(function(el){
+				var to=parseFloat(el.getAttribute('data-count'))||0,fmt=el.getAttribute('data-fmt');
+				if(reduce||to===0)return;
+				var t0=null,dur=1100;
+				function f(v){return fmt?Math.round(v).toLocaleString('tr-TR'):String(Math.round(v));}
+				function step(ts){if(!t0)t0=ts;var p=Math.min(1,(ts-t0)/dur),e=1-Math.pow(1-p,3);el.textContent=f(to*e);if(p<1)requestAnimationFrame(step);}
+				el.textContent=f(0);requestAnimationFrame(step);
+			});
+			root.querySelectorAll('.vo-card').forEach(function(c){
+				c.addEventListener('mousemove',function(e){var r=c.getBoundingClientRect();c.style.setProperty('--mx',(e.clientX-r.left)+'px');c.style.setProperty('--my',(e.clientY-r.top)+'px');});
+			});
+			var ring=document.getElementById('vo-ring'),cd=document.getElementById('vo-cd'),fg=document.getElementById('vo-ring-fg');
+			var next=ring?parseInt(ring.getAttribute('data-next'),10):0;
+			function tick(){
+				if(!next){cd.textContent='--:--';return;}
+				var left=Math.max(0,next-Math.floor(Date.now()/1000));
+				var m=Math.floor(left/60),s=left%60;
+				cd.textContent=(m<10?'0':'')+m+':'+(s<10?'0':'')+s;
+				var frac=Math.max(0,Math.min(1,1-left/3600));
+				fg.style.strokeDasharray=(frac*264)+' 264';
+			}
+			tick();setInterval(tick,1000);
+		})();
+		</script>
 	</div>
 	<?php
 }
