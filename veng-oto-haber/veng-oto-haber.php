@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Oto Haber AI
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.59
+ * Version: 1.0.60
  * Author: Veng Haber
  */
 
@@ -474,7 +474,7 @@ function veng_oh_claude_available() {
 }
 
 /** Claude API'sine tek merkezden istek atar. */
-function veng_oh_call_claude( $body, $timeout = 40 ) {
+function veng_oh_call_claude( $body, $timeout = 40, $purpose = 'diger' ) {
 	$official_key = get_option( 'veng_oh_anthropic_api_key' );
 
 	if ( ! $official_key ) {
@@ -493,9 +493,60 @@ function veng_oh_call_claude( $body, $timeout = 40 ) {
 
 	if ( ! is_wp_error( $res ) && 200 === wp_remote_retrieve_response_code( $res ) ) {
 		delete_option( 'veng_oh_last_api_error' );
+		veng_oh_record_usage( (string) ( $body['model'] ?? '' ), $purpose, wp_remote_retrieve_body( $res ) );
 	}
 
 	return $res;
+}
+
+/** Çağrı başına token kullanımını amaç+model bazında günlük sayaçlara yazar (son 14 gün). */
+function veng_oh_record_usage( $model, $purpose, $response_body ) {
+	$data = json_decode( $response_body, true );
+	if ( empty( $data['usage'] ) ) {
+		return;
+	}
+	$usage = get_option( 'veng_oh_usage', array() );
+	if ( ! is_array( $usage ) ) {
+		$usage = array();
+	}
+	$day = current_time( 'Y-m-d' );
+	$key = $purpose . '|' . $model;
+	if ( ! isset( $usage[ $day ][ $key ] ) ) {
+		$usage[ $day ][ $key ] = array( 'calls' => 0, 'in' => 0, 'out' => 0 );
+	}
+	$usage[ $day ][ $key ]['calls']++;
+	$usage[ $day ][ $key ]['in']  += (int) ( $data['usage']['input_tokens'] ?? 0 );
+	$usage[ $day ][ $key ]['out'] += (int) ( $data['usage']['output_tokens'] ?? 0 );
+	krsort( $usage );
+	update_option( 'veng_oh_usage', array_slice( $usage, 0, 14, true ), false );
+}
+
+/** Tahmini USD/1M token (girdi, çıktı). Kesin rakam için Console'a bak. */
+function veng_oh_price_per_mtok( $model ) {
+	return false !== strpos( $model, 'haiku' ) ? array( 1.0, 5.0 ) : array( 2.0, 10.0 );
+}
+
+function veng_oh_render_usage() {
+	$usage = get_option( 'veng_oh_usage', array() );
+	echo '<h2>Claude Kullanımı (son 7 gün)</h2>';
+	if ( empty( $usage ) || ! is_array( $usage ) ) {
+		echo '<p>Henüz kayıt yok (bu sürümden sonraki çağrılar sayılır).</p>';
+		return;
+	}
+	krsort( $usage );
+	echo '<table class="widefat striped" style="max-width:900px"><thead><tr><th>Gün</th><th>Amaç / model</th><th>Çağrı</th><th>Girdi tok.</th><th>Çıktı tok.</th><th>Tahmini $</th></tr></thead><tbody>';
+	foreach ( array_slice( $usage, 0, 7, true ) as $day => $rows ) {
+		$day_cost = 0.0;
+		foreach ( $rows as $key => $r ) {
+			list( $purpose, $model ) = array_pad( explode( '|', $key, 2 ), 2, '' );
+			$p    = veng_oh_price_per_mtok( $model );
+			$cost = $r['in'] / 1e6 * $p[0] + $r['out'] / 1e6 * $p[1];
+			$day_cost += $cost;
+			echo '<tr><td>' . esc_html( $day ) . '</td><td>' . esc_html( $purpose . ' / ' . $model ) . '</td><td>' . esc_html( number_format_i18n( $r['calls'] ) ) . '</td><td>' . esc_html( number_format_i18n( $r['in'] ) ) . '</td><td>' . esc_html( number_format_i18n( $r['out'] ) ) . '</td><td>$' . esc_html( number_format( $cost, 2 ) ) . '</td></tr>';
+		}
+		echo '<tr><td colspan="5"><strong>' . esc_html( $day ) . ' toplam (tahmini)</strong></td><td><strong>$' . esc_html( number_format( $day_cost, 2 ) ) . '</strong></td></tr>';
+	}
+	echo '</tbody></table><p class="description">Rakamlar tahmindir; esas olan console.anthropic.com faturasıdır.</p>';
 }
 
 /** Kaynak haberi Veng Haber editöryel kurallarına göre kendi cümleleriyle yeniden yazar. */
@@ -528,7 +579,7 @@ function veng_oh_editorial_rewrite( $item, $source ) {
 		'model'      => 'claude-sonnet-5',
 		'max_tokens' => 3072,
 		'messages'   => array( array( 'role' => 'user', 'content' => $prompt ) ),
-	), 40 );
+	), 40, 'yeniden-yaz' );
 
 	if ( is_wp_error( $res ) ) {
 		veng_oh_log( 'Anthropic isteği başarısız: ' . $res->get_error_message() );
@@ -610,7 +661,7 @@ function veng_oh_editorial_merge_rewrite( $story ) {
 		'model'      => 'claude-sonnet-5',
 		'max_tokens' => 3072,
 		'messages'   => array( array( 'role' => 'user', 'content' => $prompt ) ),
-	), 45 );
+	), 45, 'harman' );
 
 	if ( is_wp_error( $res ) ) {
 		veng_oh_log( 'Anthropic harman isteği başarısız: ' . $res->get_error_message() );
@@ -1207,7 +1258,7 @@ function veng_oh_group_and_pick_stories( $candidates, $limit ) {
 	foreach ( $candidates as $i => $c ) {
 		$list .= ( $i + 1 ) . ') [' . $c['feed']['source'] . '] ' . $c['item']['title'];
 		if ( ! empty( $c['item']['summary'] ) ) {
-			$list .= ' — ' . mb_substr( $c['item']['summary'], 0, 150 );
+			$list .= ' — ' . mb_substr( $c['item']['summary'], 0, 100 );
 		}
 		$list .= "\n";
 	}
@@ -1223,11 +1274,13 @@ function veng_oh_group_and_pick_stories( $candidates, $limit ) {
 		. $list . "\n"
 		. "Sadece seçtiğin {$limit} grubu, her grubun aday numaralarını içeren bir dizi dizisi olarak JSON döndür, başka hiçbir şey yazma: {\"groups\": [[3, 7], [1], [5, 2, 9]]}";
 
+	// Gruplama/önem sıralama basit bir sınıflandırma işi ve her saat birkaç kez, uzun aday
+	// listesiyle çağrılıyor (girdi token'ının çoğu burada) — Haiku ile ~2-3 kat ucuz.
 	$res = veng_oh_call_claude( array(
-		'model'      => 'claude-sonnet-5',
+		'model'      => 'claude-haiku-4-5',
 		'max_tokens' => 512,
 		'messages'   => array( array( 'role' => 'user', 'content' => $prompt ) ),
-	), 30 );
+	), 30, 'gruplama' );
 
 	if ( is_wp_error( $res ) || wp_remote_retrieve_response_code( $res ) !== 200 ) {
 		veng_oh_log( 'Gruplama/önem sıralama isteği başarısız, ilk ' . $limit . ' aday tek tek kullanılıyor.' );
@@ -1742,6 +1795,8 @@ function veng_oh_settings_page() {
 			</p>
 		</form>
 		<p class="description">"Kaynak Notunu Sadeleştir": eski "...habere git" linkli kaynak notunu sade "Güncel Haber Kaynak: X" ile değiştirir.<br>"Sahipsiz Görselleri Sil": hiçbir yazının öne çıkan görseli olmayan VE var olan bir yazıya bağlı olmayan görselleri siler (logo/site ikonu korunur) — sayı sıfırsa buton görünmez.</p>
+
+		<?php veng_oh_render_usage(); ?>
 
 		<h2>Durum</h2>
 		<?php $last_api_error = get_option( 'veng_oh_last_api_error' ); ?>
