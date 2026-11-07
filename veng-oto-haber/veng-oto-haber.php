@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Oto Haber AI
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.64
+ * Version: 1.0.65
  * Author: Veng Haber
  */
 
@@ -552,24 +552,24 @@ function veng_oh_price_per_mtok( $model ) {
 }
 
 function veng_oh_render_usage() {
-	$usage = get_option( 'veng_oh_usage', array() );
-	echo '<h2>Claude Kullanımı (son 7 gün)</h2>';
+	$usage  = get_option( 'veng_oh_usage', array() );
 	$month  = veng_oh_month_spend();
 	$budget = veng_oh_monthly_budget();
 	$pct    = min( 100, (int) round( $month['cost'] / $budget * 100 ) );
-	echo '<p><strong>Bu ay (tahmini):</strong> $' . esc_html( number_format( $month['cost'], 2 ) ) . ' / $' . esc_html( number_format( $budget, 2 ) ) . ' bütçe (%' . esc_html( $pct ) . ')';
+	$class  = $pct >= 100 ? 'bad' : ( $pct >= 80 ? 'warn' : '' );
+	echo '<div class="vo-budget"><strong>$' . esc_html( number_format( $month['cost'], 2 ) ) . '</strong><span>bu ay (tahmini) · bütçe $' . esc_html( number_format( $budget, 0 ) ) . ' · %' . esc_html( $pct ) . '</span></div>';
+	echo '<div class="vo-bar ' . esc_attr( $class ) . '"><i style="width:' . esc_attr( $pct ) . '%"></i></div>';
 	if ( $month['cost'] >= $budget ) {
-		echo ' <span style="color:#991b1b;font-weight:700;">— BÜTÇE DOLDU, yeni haber üretimi ay sonuna kadar durdu.</span>';
+		echo '<div class="vo-alert"><strong>Bütçe doldu</strong>Yeni haber üretimi ay sonuna kadar durdu. Ayarlardan bütçeyi artırabilirsin.</div>';
 	} elseif ( $pct >= 80 ) {
-		echo ' <span style="color:#b45309;font-weight:700;">— bütçenin %80\'i aşıldı.</span>';
+		echo '<div class="vo-alert" style="background:#fffbeb;border-color:#fde68a;color:#92400e;"><strong>Bütçenin %80\'i aşıldı</strong>Ay sonuna kadar yetmeyebilir.</div>';
 	}
-	echo '</p>';
 	if ( empty( $usage ) || ! is_array( $usage ) ) {
-		echo '<p>Henüz kayıt yok (bu sürümden sonraki çağrılar sayılır).</p>';
+		echo '<div class="vo-empty">Henüz kayıt yok. Sayaç, güncellemeden sonraki Claude çağrılarını sayar.</div>';
 		return;
 	}
 	krsort( $usage );
-	echo '<table class="widefat striped" style="max-width:900px"><thead><tr><th>Gün</th><th>Amaç / model</th><th>Çağrı</th><th>Girdi tok.</th><th>Çıktı tok.</th><th>Tahmini $</th></tr></thead><tbody>';
+	echo '<table class="vo-table"><thead><tr><th>Gün</th><th>İş / model</th><th>Çağrı</th><th>Girdi</th><th>Çıktı</th><th>Tahmini $</th></tr></thead><tbody>';
 	foreach ( array_slice( $usage, 0, 7, true ) as $day => $rows ) {
 		$day_cost = 0.0;
 		foreach ( $rows as $key => $r ) {
@@ -577,11 +577,11 @@ function veng_oh_render_usage() {
 			$p    = veng_oh_price_per_mtok( $model );
 			$cost = $r['in'] / 1e6 * $p[0] + $r['out'] / 1e6 * $p[1];
 			$day_cost += $cost;
-			echo '<tr><td>' . esc_html( $day ) . '</td><td>' . esc_html( $purpose . ' / ' . $model ) . '</td><td>' . esc_html( number_format_i18n( $r['calls'] ) ) . '</td><td>' . esc_html( number_format_i18n( $r['in'] ) ) . '</td><td>' . esc_html( number_format_i18n( $r['out'] ) ) . '</td><td>$' . esc_html( number_format( $cost, 2 ) ) . '</td></tr>';
+			echo '<tr><td>' . esc_html( substr( $day, 5 ) ) . '</td><td>' . esc_html( $purpose ) . ' <span style="color:#94a3b8">· ' . esc_html( str_replace( 'claude-', '', $model ) ) . '</span></td><td>' . esc_html( number_format_i18n( $r['calls'] ) ) . '</td><td>' . esc_html( number_format_i18n( $r['in'] ) ) . '</td><td>' . esc_html( number_format_i18n( $r['out'] ) ) . '</td><td>$' . esc_html( number_format( $cost, 2 ) ) . '</td></tr>';
 		}
-		echo '<tr><td colspan="5"><strong>' . esc_html( $day ) . ' toplam (tahmini)</strong></td><td><strong>$' . esc_html( number_format( $day_cost, 2 ) ) . '</strong></td></tr>';
+		echo '<tr class="tot"><td colspan="5">' . esc_html( substr( $day, 5 ) ) . ' toplam</td><td>$' . esc_html( number_format( $day_cost, 2 ) ) . '</td></tr>';
 	}
-	echo '</tbody></table><p class="description">Rakamlar tahmindir; esas olan console.anthropic.com faturasıdır.</p>';
+	echo '</tbody></table><p class="vo-hint">Rakamlar tahmindir; esas olan console.anthropic.com faturasıdır.</p>';
 }
 
 /** Kaynak haberi Veng Haber editöryel kurallarına göre kendi cümleleriyle yeniden yazar. */
@@ -1738,142 +1738,266 @@ function veng_oh_settings_page() {
 	$admin_stats = veng_oh_stats_cache_get( 'veng_oh_admin_stats' );
 	$auto_post_count = $admin_stats ? $admin_stats['auto_post_count'] : null;
 	$unmarked_by_author = $admin_stats ? $admin_stats['unmarked_by_author'] : array();
-	?>
-	<div class="wrap">
-		<h1>Oto Haber AI</h1>
-		<p>RSS kaynaklarından haberleri çeker, Claude ile editöryel kurallara göre yeniden yazar, kategoriye göre yayınlar. Saat başı kendi kendine çalışır (06:00–22:00 arası, site ziyaretiyle tetiklenir).</p>
-
-		<style>
-			.veng-oh-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:32px;align-items:start}
-			@media (max-width:1100px){.veng-oh-cols{grid-template-columns:minmax(0,1fr)}}
-			.veng-oh-cols .form-table th{width:130px;padding:12px 10px 12px 0}
-			.veng-oh-cols h2,.veng-oh-cols h3{margin-top:0}
-		</style>
-		<div class="veng-oh-cols">
-		<div>
-		<form method="post">
-			<?php wp_nonce_field( 'veng_oh_settings' ); ?>
-			<table class="form-table">
-				<tr>
-					<th><label for="veng_oh_anthropic_api_key">Claude (Anthropic) API Anahtarı</label></th>
-					<td>
-						<input type="text" id="veng_oh_anthropic_api_key" name="veng_oh_anthropic_api_key" value="<?php echo esc_attr( $api_key ); ?>" class="regular-text" placeholder="sk-ant-..." />
-						<?php if ( $api_key ) : ?>
-							<span style="color:#166534;font-weight:700;">✓ Kayıtlı (yeniden yazma aktif)</span>
-						<?php else : ?>
-							<span style="color:#991b1b;font-weight:700;">✗ Kayıtlı değil — haberler yeniden yazılmadan, ham özetle ekleniyor!</span>
-						<?php endif; ?>
-						<p class="description">Boşsa haberler yeniden yazılmadan, kaynak özetiyle eklenir.</p>
-					</td>
-				</tr>
-				<tr>
-					<th><label for="veng_oh_monthly_budget">Aylık Claude bütçesi ($)</label></th>
-					<td>
-						<input type="number" step="1" min="1" id="veng_oh_monthly_budget" name="veng_oh_monthly_budget" value="<?php echo esc_attr( veng_oh_monthly_budget() ); ?>" class="small-text" />
-						<p class="description">Tahmini aylık harcama bu rakama ulaşınca yeni haber üretimi ay sonuna kadar durur. Eklentinin kendi sayacına göredir (yaklaşık); Anthropic Console'daki harcama sınırını da ayrıca koy.</p>
-					</td>
-				</tr>
-			</table>
-			<p class="submit">
-				<button type="submit" name="veng_oh_save_settings" class="button button-primary">Ayarları Kaydet</button>
-				<button type="submit" name="veng_oh_run_now" class="button">Şimdi Çalıştır</button>
-				<button type="submit" name="veng_oh_reset_daily_count" class="button" onclick="return confirm('Bugünkü sayaç (toplam + Kürt/Dünya/Diğer dağılımı) sıfırlanacak. Yazı silinmez, sadece sayaç. Emin misin?');">Günlük Sayacı Sıfırla</button>
-				<?php $sputnik = veng_oh_stats_cache_get( 'veng_oh_sputnik_count' ); ?>
-				<?php if ( $sputnik && $sputnik['count'] > 0 ) : ?>
-					<button type="submit" name="veng_oh_delete_sputnik_posts" class="button" onclick="return confirm('<?php echo esc_js( number_format_i18n( $sputnik['count'] ) ); ?> Sputnik kaynaklı haber çöpe taşınacak (kalıcı silinmez, Çöp Kutusu\'ndan geri alınabilir). Emin misin?' );">Sputnik Haberlerini Çöpe Taşı (<?php echo esc_html( number_format_i18n( $sputnik['count'] ) ); ?>)</button>
-				<?php endif; ?>
-			</p>
-		</form>
-		<h2 style="margin-top:24px;">Durum</h2>
-		<?php $last_api_error = get_option( 'veng_oh_last_api_error' ); ?>
-		<?php if ( $last_api_error && ! empty( $last_api_error['reason'] ) ) : ?>
-			<p style="background:#fef2f2;border:1px solid #fecaca;padding:10px 14px;border-radius:6px;">
-				<strong style="color:#991b1b;">Son API hatası</strong> (<?php echo esc_html( $last_api_error['time'] ); ?>): <?php echo esc_html( $last_api_error['reason'] ); ?><br>
-				<span style="font-size:12.5px;">Haberler sürekli taslağa düşüyorsa sebep muhtemelen bu — "401"/"invalid" geçiyorsa key geçersiz, "429"/"rate" ya da "credit"/"quota" geçiyorsa kota/bakiye bitmiş demektir. console.anthropic.com'dan kontrol et.</span>
-			</p>
-		<?php endif; ?>
-		<?php
-		$dc            = $daily_count;
-		$source_counts = $dc['sources'] ?? array();
-		$cand_by_src   = array();
-		$sel_lines     = array();
-		if ( $last ) {
-			foreach ( (array) $last['lines'] as $line ) {
-				if ( 0 === strpos( $line, 'Seçildi' ) ) {
-					$sel_lines[] = $line;
-				} elseif ( preg_match( '/^(.*)\/[^\/]+: (?:(\d+) aday|alınamadı)$/u', $line, $mm ) ) {
-					$cand_by_src[ $mm[1] ] = ( $cand_by_src[ $mm[1] ] ?? 0 ) + ( isset( $mm[2] ) ? (int) $mm[2] : 0 );
-					if ( ! isset( $mm[2] ) ) {
-						$cand_by_src[ $mm[1] . '|err' ] = true;
-					}
+	$dc            = $daily_count;
+	$source_counts = $dc['sources'] ?? array();
+	$cand_by_src   = array();
+	$sel_lines     = array();
+	if ( $last ) {
+		foreach ( (array) $last['lines'] as $line ) {
+			if ( 0 === strpos( $line, 'Seçildi' ) ) {
+				$sel_lines[] = $line;
+			} elseif ( preg_match( '/^(.*)\/[^\/]+: (?:(\d+) aday|alınamadı)$/u', $line, $mm ) ) {
+				$cand_by_src[ $mm[1] ] = ( $cand_by_src[ $mm[1] ] ?? 0 ) + ( isset( $mm[2] ) ? (int) $mm[2] : 0 );
+				if ( ! isset( $mm[2] ) ) {
+					$cand_by_src[ $mm[1] . '|err' ] = true;
 				}
 			}
 		}
-		$known_sources = array_values( array_unique( array_map( function ( $f ) { return $f['source']; }, veng_oh_feeds() ) ) );
-		usort( $known_sources, function ( $a, $b ) use ( $source_counts ) {
-			return ( $source_counts[ $b ] ?? 0 ) <=> ( $source_counts[ $a ] ?? 0 );
-		} );
-		?>
-		<table class="widefat striped">
-			<tbody>
-				<tr><td>Bugün eklenen</td><td><strong><?php echo esc_html( $dc['count'] ); ?> / <?php echo esc_html( VENG_OH_DAILY_CAP ); ?></strong></td></tr>
-				<tr><td>Kürt bölgesi</td><td><?php echo esc_html( $dc['kurdish'] ); ?> (hedef ≥<?php echo esc_html( VENG_OH_KURDISH_DAILY_MIN ); ?>)</td></tr>
-				<tr><td>Dünya</td><td><?php echo esc_html( $dc['world'] ); ?> / <?php echo esc_html( VENG_OH_WORLD_DAILY_CAP ); ?></td></tr>
-				<tr><td>Diğer</td><td><?php echo esc_html( $dc['other'] ); ?></td></tr>
-				<tr><td>Bölge spor*</td><td><?php echo esc_html( $dc['bolge_spor'] ?? 0 ); ?> / <?php echo esc_html( VENG_OH_REGIONAL_SPORTS_DAILY_CAP ); ?></td></tr>
-				<tr><td>Toplam otomatik haber</td><td><?php echo null === $auto_post_count ? 'hesaplanıyor…' : esc_html( number_format_i18n( $auto_post_count ) ); ?></td></tr>
-			</tbody>
-		</table>
-		<p class="description">* Amedspor/bölge kulüpleri, günlük 30 sınırının dışında ek hak. Saat başı çalışır (<?php echo esc_html( VENG_OH_ACTIVE_HOUR_START ); ?>:00–<?php echo esc_html( VENG_OH_ACTIVE_HOUR_END ); ?>:00), turda en fazla <?php echo esc_html( VENG_OH_RUN_CAP ); ?> haber. Sıradaki: <?php echo $next_cron ? esc_html( date_i18n( 'd.m.Y H:i', $next_cron ) ) : 'planlanmadı'; ?><?php echo $last ? ' · Son tarama: ' . esc_html( $last['time'] ) . ' (' . intval( $last['created'] ) . ' yeni)' : ' · Henüz tarama çalışmadı'; ?></p>
+	}
+	$known_sources = array_values( array_unique( array_map( function ( $f ) { return $f['source']; }, veng_oh_feeds() ) ) );
+	usort( $known_sources, function ( $a, $b ) use ( $source_counts ) {
+		return ( $source_counts[ $b ] ?? 0 ) <=> ( $source_counts[ $a ] ?? 0 );
+	} );
+	$last_api_error = get_option( 'veng_oh_last_api_error' );
+	$has_api_error  = $last_api_error && ! empty( $last_api_error['reason'] );
+	$pct = function ( $v, $max ) {
+		return $max > 0 ? max( 0, min( 100, (int) round( $v / $max * 100 ) ) ) : 0;
+	};
+	$month   = veng_oh_month_spend();
+	$budget  = veng_oh_monthly_budget();
+	$mpct    = $pct( $month['cost'], $budget );
+	$mclass  = $mpct >= 100 ? 'bad' : ( $mpct >= 80 ? 'warn' : '' );
+	$regions = array(
+		array( 'Kürt bölgesi', (int) $dc['kurdish'], VENG_OH_KURDISH_DAILY_MIN ),
+		array( 'Dünya', (int) $dc['world'], VENG_OH_WORLD_DAILY_CAP ),
+		array( 'Diğer', (int) $dc['other'], VENG_OH_DAILY_CAP ),
+		array( 'Bölge spor', (int) ( $dc['bolge_spor'] ?? 0 ), VENG_OH_REGIONAL_SPORTS_DAILY_CAP ),
+	);
+	?>
+	<div class="wrap vo">
+		<style>
+			.vo{--ink:#0f172a;--mut:#64748b;--line:#e8ebf4;--card:#fff;--acc:#7c5cff;--acc2:#22d3ee;--ok:#10b981;--warn:#f59e0b;--bad:#ef4444;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--ink);max-width:1480px;margin-top:18px}
+			.vo *{box-sizing:border-box}
+			.vo-hero{position:relative;overflow:hidden;border-radius:24px;padding:32px 36px 28px;color:#fff;background:radial-gradient(900px 380px at 85% -10%,rgba(124,92,255,.6),transparent 60%),radial-gradient(700px 320px at -5% 115%,rgba(34,211,238,.3),transparent 60%),linear-gradient(135deg,#0a0e24 0%,#141a4a 55%,#2a1672 100%);box-shadow:0 28px 64px -26px rgba(32,24,120,.6)}
+			.vo-hero:after{content:"";position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.045) 1px,transparent 1px);background-size:34px 34px;-webkit-mask-image:linear-gradient(180deg,#000,transparent 85%);mask-image:linear-gradient(180deg,#000,transparent 85%);pointer-events:none}
+			.vo-hero>*{position:relative;z-index:1}
+			.vo-top{display:flex;justify-content:space-between;gap:22px;flex-wrap:wrap;align-items:flex-start}
+			.vo-kicker{display:inline-flex;gap:10px;align-items:center;font-size:11px;letter-spacing:.24em;font-weight:700;color:#b9c3ff;text-transform:uppercase}
+			.vo-kicker i{width:24px;height:2px;background:linear-gradient(90deg,var(--acc2),var(--acc));border-radius:2px}
+			.vo h1.vo-title{font-size:36px;line-height:1.08;margin:12px 0 10px;padding:0;color:#fff;font-weight:800;letter-spacing:-.025em}
+			.vo-sub{margin:0;max-width:640px;color:#c7cdf0;font-size:13.5px;line-height:1.65}
+			.vo-pills{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+			.vo-pill{display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border-radius:999px;font-size:12px;font-weight:600;background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.17);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);color:#e8ebff}
+			.vo-pill b{font-weight:700;color:#fff}
+			.vo-dot{width:8px;height:8px;border-radius:50%;background:#94a3b8;box-shadow:0 0 0 3px rgba(148,163,184,.25)}
+			.vo-dot.ok{background:var(--ok);box-shadow:0 0 0 3px rgba(16,185,129,.28)}
+			.vo-dot.bad{background:var(--bad);box-shadow:0 0 0 3px rgba(239,68,68,.3)}
+			.vo-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-top:28px}
+			.vo-kpi{padding:17px 19px;border-radius:18px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
+			.vo-kpi small{display:block;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:#aab4ee;font-weight:700}
+			.vo-kpi strong{display:block;margin:7px 0 11px;font-size:30px;line-height:1;font-weight:800;letter-spacing:-.025em;font-variant-numeric:tabular-nums}
+			.vo-kpi strong span{font-size:14px;color:#aab4ee;font-weight:600;margin-left:4px;letter-spacing:0}
+			.vo-kpi .vo-sm{display:block;font-size:11.5px;color:#aab4ee;margin-top:-2px}
+			.vo-bar{height:6px;border-radius:99px;background:rgba(255,255,255,.15);overflow:hidden}
+			.vo-bar>i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--acc2),var(--acc));transition:width .9s cubic-bezier(.2,.8,.2,1)}
+			.vo-bar.warn>i{background:linear-gradient(90deg,#fbbf24,#f97316)}
+			.vo-bar.bad>i{background:linear-gradient(90deg,#fb7185,#ef4444)}
+			.vo-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:22px;margin-top:22px;align-items:start}
+			@media (max-width:1100px){.vo-grid{grid-template-columns:minmax(0,1fr)}.vo-pills{justify-content:flex-start}}
+			.vo-col{display:grid;gap:22px;min-width:0}
+			.vo-card{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:26px 28px;box-shadow:0 1px 2px rgba(15,23,42,.04),0 20px 44px -28px rgba(30,41,120,.3)}
+			.vo-card h2{display:flex;align-items:center;gap:10px;margin:0 0 5px;padding:0;font-size:16.5px;font-weight:750;letter-spacing:-.01em;color:var(--ink)}
+			.vo-card h2 em{font-style:normal;font-size:10.5px;font-weight:700;color:#5b3df5;background:#efeaff;padding:3px 10px;border-radius:99px;letter-spacing:.06em}
+			.vo-desc{margin:0 0 18px;font-size:12.5px;color:var(--mut);line-height:1.55}
+			.vo-field{margin-bottom:18px}
+			.vo-field label{display:block;font-size:11.5px;font-weight:700;color:#334155;margin-bottom:7px;letter-spacing:.04em;text-transform:uppercase}
+			.vo-field input{width:100%;height:46px;border-radius:13px;border:1.5px solid var(--line);background:#f8f9fd;padding:0 15px;font-size:14px;color:var(--ink);box-shadow:none;transition:all .18s}
+			.vo-field input:focus{outline:0;border-color:var(--acc);background:#fff;box-shadow:0 0 0 4px rgba(124,92,255,.16)}
+			.vo-hint{margin:8px 0 0;font-size:12px;color:var(--mut);line-height:1.55}
+			.vo-ok{color:#047857;font-weight:700}.vo-no{color:#be123c;font-weight:700}
+			.vo-row{display:grid;grid-template-columns:150px 1fr;gap:16px;align-items:start}
+			.vo-btns{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px}
+			.vo-btn{appearance:none;border:0;cursor:pointer;height:44px;padding:0 22px;border-radius:13px;font-size:13px;font-weight:700;letter-spacing:.01em;transition:all .18s;font-family:inherit}
+			.vo-btn.pri{color:#fff;background:linear-gradient(135deg,#7c5cff,#5b3df5);box-shadow:0 12px 24px -10px rgba(91,61,245,.85)}
+			.vo-btn.pri:hover{transform:translateY(-1px);box-shadow:0 16px 28px -10px rgba(91,61,245,.95)}
+			.vo-btn.sec{color:#4338ca;background:#eef0ff}.vo-btn.sec:hover{background:#e2e5ff}
+			.vo-btn.gho{color:#475569;background:#fff;border:1.5px solid var(--line)}.vo-btn.gho:hover{border-color:#cbd5e1;background:#f8fafc}
+			.vo-region{display:grid;gap:15px;margin-top:18px}
+			.vo-r{display:grid;grid-template-columns:110px 1fr 74px;gap:14px;align-items:center;font-size:13px}
+			.vo-r span{color:#475569;font-weight:600}
+			.vo-r b{font-variant-numeric:tabular-nums;color:var(--ink);font-weight:750;text-align:right}
+			.vo-r b small{color:#94a3b8;font-weight:600;font-size:11px}
+			.vo-card .vo-bar{background:#eceffa;height:8px}
+			.vo-alert{margin:16px 0 0;padding:14px 16px;border-radius:15px;background:#fff1f2;border:1px solid #fecdd3;color:#9f1239;font-size:12.5px;line-height:1.6}
+			.vo-alert strong{display:block;margin-bottom:3px;font-size:13px}
+			.vo-note{margin:18px 0 0;padding-top:15px;border-top:1px dashed var(--line);font-size:12px;color:var(--mut);line-height:1.65}
+			.vo-table{width:100%;border-collapse:separate;border-spacing:0;margin-top:16px;font-size:12.5px}
+			.vo-table th{text-align:left;padding:9px 10px;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#94a3b8;font-weight:700;border-bottom:1px solid var(--line)}
+			.vo-table td{padding:10px;border-bottom:1px solid #f1f3fa;color:#334155;font-variant-numeric:tabular-nums}
+			.vo-table tr.tot td{background:#f5f4ff;font-weight:750;color:#3730a3;border-bottom:0}
+			.vo-table tr.tot td:first-child{border-radius:11px 0 0 11px}.vo-table tr.tot td:last-child{border-radius:0 11px 11px 0}
+			.vo-budget{display:flex;align-items:baseline;justify-content:space-between;margin:18px 0 10px}
+			.vo-budget strong{font-size:28px;font-weight:800;letter-spacing:-.025em}
+			.vo-budget span{color:var(--mut);font-size:13px;font-weight:600}
+			.vo-src-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:10px;margin-top:18px}
+			.vo-src{display:flex;align-items:center;gap:10px;padding:11px 13px;border-radius:13px;background:#f8f9fd;border:1px solid #eef0f8;font-size:12.5px}
+			.vo-src .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;color:#334155}
+			.vo-src .n{font-variant-numeric:tabular-nums;color:var(--mut);font-size:12px;white-space:nowrap}
+			.vo-src .n b{color:var(--ink);font-size:13px}
+			.vo-src .vo-dot{flex:none}
+			.vo-tl{list-style:none;margin:18px 0 0;padding:0;display:grid;gap:10px}
+			.vo-tl li{display:flex;gap:12px;align-items:flex-start;padding:13px 15px;border-radius:14px;background:#f8f9fd;border:1px solid #eef0f8;font-size:13px;line-height:1.5;color:#1e293b;margin:0}
+			.vo-tag{flex:none;margin-top:1px;padding:3px 10px;border-radius:99px;font-size:10.5px;font-weight:700;letter-spacing:.03em;color:#4338ca;background:#e9e8ff;white-space:nowrap}
+			.vo-tag.sp{color:#047857;background:#d9f7ec}
+			.vo-empty{padding:20px;border-radius:15px;background:#f8f9fd;border:1px dashed #d9def0;color:var(--mut);font-size:13px;text-align:center;margin-top:16px}
+			.vo details summary{cursor:pointer;font-weight:700;font-size:13.5px;color:#334155}
+			.vo-foot{margin:22px 4px 8px;font-size:11.5px;color:#94a3b8;text-align:center}
+		</style>
 
+		<header class="vo-hero">
+			<div class="vo-top">
+				<div>
+					<span class="vo-kicker"><i></i>Veng Haber · Otomasyon</span>
+					<h1 class="vo-title">Oto Haber AI</h1>
+					<p class="vo-sub">RSS kaynaklarından haberleri çeker, Claude ile editöryel kurallara göre yeniden yazar ve kategoriye göre yayınlar. Saat başı kendi kendine çalışır (06:00–22:00).</p>
+				</div>
+				<div class="vo-pills">
+					<span class="vo-pill"><span class="vo-dot <?php echo $api_key && ! $has_api_error ? 'ok' : 'bad'; ?>"></span><?php echo $api_key ? ( $has_api_error ? 'API hatası var' : 'Claude bağlı' ) : 'API anahtarı yok'; ?></span>
+					<span class="vo-pill">Sıradaki <b><?php echo $next_cron ? esc_html( date_i18n( 'H:i', $next_cron ) ) : '—'; ?></b></span>
+					<span class="vo-pill">Son tarama <b><?php echo $last ? esc_html( substr( $last['time'], 11, 5 ) ) . ' · ' . intval( $last['created'] ) . ' yeni' : '—'; ?></b></span>
+				</div>
+			</div>
+			<div class="vo-kpis">
+				<div class="vo-kpi"><small>Bugün eklenen</small><strong><?php echo esc_html( $dc['count'] ); ?><span>/ <?php echo esc_html( VENG_OH_DAILY_CAP ); ?></span></strong><div class="vo-bar"><i style="width:<?php echo esc_attr( $pct( $dc['count'], VENG_OH_DAILY_CAP ) ); ?>%"></i></div></div>
+				<div class="vo-kpi"><small>Kürt bölgesi</small><strong><?php echo esc_html( $dc['kurdish'] ); ?><span>/ <?php echo esc_html( VENG_OH_KURDISH_DAILY_MIN ); ?> hedef</span></strong><div class="vo-bar"><i style="width:<?php echo esc_attr( $pct( $dc['kurdish'], VENG_OH_KURDISH_DAILY_MIN ) ); ?>%"></i></div></div>
+				<div class="vo-kpi"><small>Bölge spor</small><strong><?php echo esc_html( $dc['bolge_spor'] ?? 0 ); ?><span>/ <?php echo esc_html( VENG_OH_REGIONAL_SPORTS_DAILY_CAP ); ?></span></strong><div class="vo-bar"><i style="width:<?php echo esc_attr( $pct( $dc['bolge_spor'] ?? 0, VENG_OH_REGIONAL_SPORTS_DAILY_CAP ) ); ?>%"></i></div></div>
+				<div class="vo-kpi"><small>Bu ay (tahmini)</small><strong>$<?php echo esc_html( number_format( $month['cost'], 2 ) ); ?><span>/ $<?php echo esc_html( number_format( $budget, 0 ) ); ?></span></strong><div class="vo-bar <?php echo esc_attr( $mclass ); ?>"><i style="width:<?php echo esc_attr( $mpct ); ?>%"></i></div></div>
+				<div class="vo-kpi"><small>Toplam otomatik haber</small><strong><?php echo null === $auto_post_count ? '…' : esc_html( number_format_i18n( $auto_post_count ) ); ?></strong><span class="vo-sm"><?php echo null === $auto_post_count ? 'arka planda hesaplanıyor' : 'yayında'; ?></span></div>
+			</div>
+		</header>
+
+		<div class="vo-grid">
+			<div class="vo-col">
+				<section class="vo-card">
+					<h2>Ayarlar</h2>
+					<p class="vo-desc">Claude bağlantısı ve aylık harcama sınırı.</p>
+					<form method="post">
+						<?php wp_nonce_field( 'veng_oh_settings' ); ?>
+						<div class="vo-field">
+							<label for="veng_oh_anthropic_api_key">Claude (Anthropic) API anahtarı</label>
+							<input type="text" id="veng_oh_anthropic_api_key" name="veng_oh_anthropic_api_key" value="<?php echo esc_attr( $api_key ); ?>" placeholder="sk-ant-..." autocomplete="off" />
+							<p class="vo-hint"><?php if ( $api_key ) : ?><span class="vo-ok">✓ Kayıtlı</span> — yeniden yazma aktif.<?php else : ?><span class="vo-no">✗ Kayıtlı değil</span> — haberler yeniden yazılmadan, ham özetle ekleniyor!<?php endif; ?></p>
+						</div>
+						<div class="vo-row">
+							<div class="vo-field">
+								<label for="veng_oh_monthly_budget">Aylık bütçe ($)</label>
+								<input type="number" step="1" min="1" id="veng_oh_monthly_budget" name="veng_oh_monthly_budget" value="<?php echo esc_attr( veng_oh_monthly_budget() ); ?>" />
+							</div>
+							<p class="vo-hint" style="margin-top:28px;">Tahmini harcama bu rakama ulaşınca yeni haber üretimi ay sonuna kadar durur. Eklentinin kendi sayacına göredir; Anthropic Console'daki harcama sınırını da ayrıca koy.</p>
+						</div>
+						<div class="vo-btns">
+							<button type="submit" name="veng_oh_save_settings" class="vo-btn pri">Ayarları kaydet</button>
+							<button type="submit" name="veng_oh_run_now" class="vo-btn sec">Şimdi çalıştır</button>
+							<button type="submit" name="veng_oh_reset_daily_count" class="vo-btn gho" onclick="return confirm('Bugünkü sayaç (toplam + Kürt/Dünya/Diğer dağılımı) sıfırlanacak. Yazı silinmez, sadece sayaç. Emin misin?');">Günlük sayacı sıfırla</button>
+							<?php $sputnik = veng_oh_stats_cache_get( 'veng_oh_sputnik_count' ); ?>
+							<?php if ( $sputnik && $sputnik['count'] > 0 ) : ?>
+								<button type="submit" name="veng_oh_delete_sputnik_posts" class="vo-btn gho" onclick="return confirm('<?php echo esc_js( number_format_i18n( $sputnik['count'] ) ); ?> Sputnik kaynaklı haber çöpe taşınacak (kalıcı silinmez, Çöp Kutusu\'ndan geri alınabilir). Emin misin?' );">Sputnik haberlerini çöpe taşı (<?php echo esc_html( number_format_i18n( $sputnik['count'] ) ); ?>)</button>
+							<?php endif; ?>
+						</div>
+					</form>
+				</section>
+
+				<section class="vo-card">
+					<h2>Durum <em>BUGÜN</em></h2>
+					<p class="vo-desc">Günlük sınıra ve bölge hedeflerine göre ilerleme.</p>
+					<?php if ( $has_api_error ) : ?>
+						<div class="vo-alert"><strong>Son API hatası · <?php echo esc_html( $last_api_error['time'] ); ?></strong><?php echo esc_html( $last_api_error['reason'] ); ?><br>"401"/"invalid" geçiyorsa anahtar geçersiz, "429"/"rate" ya da "credit"/"quota" geçiyorsa kota/bakiye bitmiş demektir. console.anthropic.com'dan kontrol et.</div>
+					<?php endif; ?>
+					<div class="vo-region">
+						<?php foreach ( $regions as $rg ) : ?>
+							<div class="vo-r">
+								<span><?php echo esc_html( $rg[0] ); ?></span>
+								<div class="vo-bar"><i style="width:<?php echo esc_attr( $pct( $rg[1], $rg[2] ) ); ?>%"></i></div>
+								<b><?php echo esc_html( $rg[1] ); ?> <small>/ <?php echo esc_html( $rg[2] ); ?></small></b>
+							</div>
+						<?php endforeach; ?>
+					</div>
+					<p class="vo-note">Kürt bölgesi için hedef alt sınırdır, Dünya için tavan. Amedspor ve bölge kulüpleri haberleri günlük 30 sınırının dışında ek haktır. Turda en fazla <?php echo esc_html( VENG_OH_RUN_CAP ); ?> haber eklenir; sıradaki çalışma <?php echo $next_cron ? esc_html( date_i18n( 'd.m.Y H:i', $next_cron ) ) : 'planlanmadı'; ?>.</p>
+				</section>
+			</div>
+
+			<div class="vo-col">
+				<section class="vo-card">
+					<h2>Claude kullanımı <em>SON 7 GÜN</em></h2>
+					<?php veng_oh_render_usage(); ?>
+				</section>
+
+				<section class="vo-card">
+					<h2>Kaynaklar <em><?php echo esc_html( count( $known_sources ) ); ?></em></h2>
+					<p class="vo-desc">Bugün yayınlanan / son taramada bulunan aday sayısı.</p>
+					<div class="vo-src-grid">
+						<?php foreach ( $known_sources as $src ) : ?>
+							<?php
+							$err  = ! empty( $cand_by_src[ $src . '|err' ] );
+							$cand = $cand_by_src[ $src ] ?? null;
+							$dot  = $err ? 'bad' : ( $cand ? 'ok' : '' );
+							?>
+							<div class="vo-src">
+								<span class="vo-dot <?php echo esc_attr( $dot ); ?>"></span>
+								<span class="nm" title="<?php echo esc_attr( $src ); ?>"><?php echo esc_html( $src ); ?></span>
+								<span class="n"><b><?php echo esc_html( $source_counts[ $src ] ?? 0 ); ?></b> / <?php echo $err ? '<span style="color:#be123c;">hata</span>' : esc_html( null === $cand ? '-' : $cand ); ?></span>
+							</div>
+						<?php endforeach; ?>
+					</div>
+				</section>
+
+				<section class="vo-card">
+					<h2>Son taramada seçilenler</h2>
+					<?php if ( $sel_lines ) : ?>
+						<ul class="vo-tl">
+							<?php foreach ( $sel_lines as $line ) : ?>
+								<?php
+								$is_sp = false !== strpos( $line, 'bölge spor' );
+								if ( preg_match( '/^Seçildi \((?:bölge spor, )?\d+ kaynak: (.*?)\): (.*)$/u', $line, $sm ) ) {
+									$tag = $sm[1];
+									$ttl = $sm[2];
+								} else {
+									$tag = 'Seçildi';
+									$ttl = $line;
+								}
+								?>
+								<li><span class="vo-tag<?php echo $is_sp ? ' sp' : ''; ?>"><?php echo esc_html( ( $is_sp ? 'Spor · ' : '' ) . $tag ); ?></span><span><?php echo esc_html( $ttl ); ?></span></li>
+							<?php endforeach; ?>
+						</ul>
+					<?php else : ?>
+						<div class="vo-empty">Son taramada yeni haber seçilmedi.</div>
+					<?php endif; ?>
+				</section>
+
+				<?php if ( $unmarked_by_author ) : ?>
+					<section class="vo-card">
+						<details>
+							<summary>Botun işaretlemediği yazılar (yazara göre)</summary>
+							<p class="vo-desc" style="margin-top:10px;">"Otomatik haber" etiketi taşımayan yazılar: elle yazılmış ya da eski sistemden kalma olabilir. Otomatik silinmez.</p>
+							<table class="vo-table">
+								<thead><tr><th>Yazar</th><th>Adet</th><th>En eski</th><th>En yeni</th></tr></thead>
+								<tbody>
+									<?php foreach ( $unmarked_by_author as $row ) : $user = get_userdata( $row->post_author ); ?>
+										<tr>
+											<td><?php echo $user ? esc_html( $user->display_name ) . ' (ID ' . intval( $row->post_author ) . ')' : 'Kullanıcı yok (ID ' . intval( $row->post_author ) . ')'; ?></td>
+											<td><?php echo intval( $row->cnt ); ?></td>
+											<td><?php echo esc_html( $row->oldest ); ?></td>
+											<td><?php echo esc_html( $row->newest ); ?></td>
+										</tr>
+									<?php endforeach; ?>
+								</tbody>
+							</table>
+						</details>
+					</section>
+				<?php endif; ?>
+			</div>
 		</div>
-		<div>
-		<?php veng_oh_render_usage(); ?>
-
-		<h3 style="margin:22px 0 6px;">Kaynaklar <span style="font-weight:400;font-size:12px;">(bugün yayın / son taramada aday)</span></h3>
-		<table class="widefat striped" style="font-size:12.5px;">
-			<tbody>
-			<?php foreach ( array_chunk( $known_sources, 2 ) as $row_sources ) : ?>
-				<tr>
-				<?php foreach ( $row_sources as $src ) : ?>
-					<td><?php echo esc_html( $src ); ?></td>
-					<td style="white-space:nowrap;"><strong><?php echo esc_html( $source_counts[ $src ] ?? 0 ); ?></strong> / <?php echo ! empty( $cand_by_src[ $src . '|err' ] ) ? '<span style="color:#991b1b;">alınamadı</span>' : esc_html( $cand_by_src[ $src ] ?? '-' ); ?></td>
-				<?php endforeach; ?>
-				<?php for ( $i = count( $row_sources ); $i < 2; $i++ ) : ?><td></td><td></td><?php endfor; ?>
-				</tr>
-			<?php endforeach; ?>
-			</tbody>
-		</table>
-
-		<?php if ( $sel_lines ) : ?>
-			<h3 style="margin-bottom:6px;">Son taramada seçilenler</h3>
-			<ul style="margin-top:0;font-size:12.5px;">
-				<?php foreach ( $sel_lines as $line ) : ?>
-					<li><?php echo esc_html( $line ); ?></li>
-				<?php endforeach; ?>
-			</ul>
-		<?php endif; ?>
-
-		<?php if ( $unmarked_by_author ) : ?>
-			<details style="margin-top:14px;"><summary style="cursor:pointer;font-weight:600;">Botun işaretlemediği yazılar (yazara göre)</summary>
-			<p class="description">"Otomatik haber" etiketi taşımayan yazılar: elle yazılmış ya da eski sistemden kalma olabilir. Otomatik silinmez.</p>
-			<table class="widefat striped" style="max-width:700px;">
-				<thead><tr><th>Yazar</th><th>Adet</th><th>En eski</th><th>En yeni</th></tr></thead>
-				<tbody>
-					<?php foreach ( $unmarked_by_author as $row ) : $user = get_userdata( $row->post_author ); ?>
-						<tr>
-							<td><?php echo $user ? esc_html( $user->display_name ) . ' (ID ' . intval( $row->post_author ) . ')' : 'Kullanıcı yok (ID ' . intval( $row->post_author ) . ')'; ?></td>
-							<td><?php echo intval( $row->cnt ); ?></td>
-							<td><?php echo esc_html( $row->oldest ); ?></td>
-							<td><?php echo esc_html( $row->newest ); ?></td>
-						</tr>
-					<?php endforeach; ?>
-				</tbody>
-			</table>
-			</details>
-		<?php endif; ?>
-		</div>
-		</div>
+		<p class="vo-foot">Veng Haber · Oto Haber AI</p>
 	</div>
 	<?php
 }
