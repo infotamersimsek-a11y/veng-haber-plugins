@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Oto Haber AI
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.61
+ * Version: 1.0.62
  * Author: Veng Haber
  */
 
@@ -1657,8 +1657,6 @@ function veng_oh_refresh_stats() {
 		@set_time_limit( 0 );
 	}
 	set_transient( 'veng_oh_admin_stats', veng_oh_compute_admin_stats(), HOUR_IN_SECONDS );
-	$orphans = veng_oh_count_orphaned_media();
-	set_transient( 'veng_oh_orphaned_media_count', array( 'count' => $orphans['count'], 'bytes' => $orphans['bytes'] ), HOUR_IN_SECONDS );
 	$sputnik = veng_oh_count_sputnik_posts();
 	set_transient( 'veng_oh_sputnik_count', array( 'count' => $sputnik['count'] ), HOUR_IN_SECONDS );
 	delete_transient( 'veng_oh_stats_refreshing' );
@@ -1696,44 +1694,9 @@ function veng_oh_settings_page() {
 		return;
 	}
 
-	$wipe_result = get_option( 'veng_oh_full_wipe_v1_result' );
-	$wipe_done = '1' === get_option( 'veng_oh_full_wipe_v1_done' );
-	if ( $wipe_result ) {
-		if ( $wipe_done ) {
-			echo '<div class="notice notice-success"><p><strong>Tam temizlik tamamlandı</strong> (' . esc_html( $wipe_result['time'] ) . '): toplam ' . intval( $wipe_result['posts'] ) . ' otomatik haber ve ' . intval( $wipe_result['attachments'] ) . ' görsel kalıcı olarak silindi. Elle yazdığın haberler dokunulmadan duruyor.</p></div>';
-		} else {
-			echo '<div class="notice notice-warning"><p><strong>Temizlik devam ediyor…</strong> Şu ana kadar ' . intval( $wipe_result['posts'] ) . ' haber silindi. Sunucuyu boğmamak için parça parça yapılıyor — bu sayfayı birkaç kez yenile, otomatik devam edecek.</p></div>';
-		}
-	}
-
-	$date_cleanup_result = get_option( 'veng_oh_date_cleanup_2026_10_result' );
-	$date_cleanup_done = '1' === get_option( 'veng_oh_date_cleanup_2026_10_done' );
-	if ( $date_cleanup_result ) {
-		if ( $date_cleanup_done ) {
-			echo '<div class="notice notice-success"><p><strong>1 günden eski yazı temizliği tamamlandı</strong> (' . esc_html( $date_cleanup_result['time'] ) . '): toplam ' . intval( $date_cleanup_result['posts'] ) . ' yazı ve ' . intval( $date_cleanup_result['attachments'] ) . ' görsel silindi. Son 24 saatteki haberler dokunulmadan duruyor.</p></div>';
-		} else {
-			echo '<div class="notice notice-warning"><p><strong>1 günden eski yazılar temizleniyor…</strong> Şu ana kadar ' . intval( $date_cleanup_result['posts'] ) . ' yazı silindi. Bu sayfayı birkaç kez yenile, otomatik devam edecek.</p></div>';
-		}
-	}
-
-	$fill_created = (int) get_option( 'veng_oh_emergency_fill_2026_10_created', 0 );
-	$fill_done = '1' === get_option( 'veng_oh_emergency_fill_2026_10_done' );
-	if ( $fill_created > 0 || $fill_done ) {
-		if ( $fill_done ) {
-			echo '<div class="notice notice-success"><p><strong>Acil kategori doldurma tamamlandı:</strong> toplam ' . $fill_created . ' gerçek haber, kategorisine göre sınıflandırılıp eklendi. Hâlâ az haberli kategori varsa, o konuda yeterli kaynak bulunamadı demektir.</p></div>';
-		} else {
-			echo '<div class="notice notice-warning"><p><strong>Kategoriler dolduruluyor…</strong> Şu ana kadar ' . $fill_created . ' haber eklendi. Bu sayfayı birkaç kez yenile, otomatik devam edecek.</p></div>';
-		}
-	}
-
 	if ( isset( $_POST['veng_oh_save_settings'] ) && check_admin_referer( 'veng_oh_settings' ) ) {
 		update_option( 'veng_oh_anthropic_api_key', sanitize_text_field( wp_unslash( $_POST['veng_oh_anthropic_api_key'] ?? '' ) ) );
-		update_option( 'veng_oh_auto_publish', isset( $_POST['veng_oh_auto_publish'] ) ? '1' : '0' );
 		update_option( 'veng_oh_monthly_budget', max( 1, (float) ( $_POST['veng_oh_monthly_budget'] ?? 60 ) ) );
-		// Mezopotamya Ajansı sık sık engellenip alan adı değiştiriyor — otomatik takip
-		// mekanizması bilinçli kurulmadı (mahkeme kararlarını atlatmak olurdu), onun yerine
-		// site sahibi yeni adresi buradan kendisi girer.
-		update_option( 'veng_oh_mezopotamya_url', esc_url_raw( wp_unslash( $_POST['veng_oh_mezopotamya_url'] ?? '' ) ) );
 		echo '<div class="notice notice-success"><p>Ayarlar kaydedildi.</p></div>';
 	}
 
@@ -1759,22 +1722,6 @@ function veng_oh_settings_page() {
 		echo '<div class="notice notice-success"><p>Günlük sayaç (toplam + bölge dağılımı) sıfırlandı. Bu sadece sayacı sıfırlar, yazı silmez.</p></div>';
 	}
 
-	if ( isset( $_POST['veng_oh_backfill_attribution'] ) && check_admin_referer( 'veng_oh_settings' ) ) {
-		$fixed = veng_oh_backfill_attribution();
-		echo '<div class="notice notice-success"><p>Kaynak notu güncellendi: ' . intval( $fixed ) . ' haberde sadeleştirildi.</p></div>';
-	}
-
-	if ( isset( $_POST['veng_oh_delete_orphaned_media'] ) && check_admin_referer( 'veng_oh_settings' ) ) {
-		// Tek istekte binlercesini silmeye çalışmak zayıf sunucuda 502'ye yol açar — diğer
-		// silme butonlarıyla aynı desen: en fazla 200/tık, kalan varsa tekrar basılır.
-		$orphans = veng_oh_count_orphaned_media();
-		$batch = array_slice( $orphans['ids'], 0, 200 );
-		$result = veng_oh_delete_orphaned_media( $batch );
-		delete_transient( 'veng_oh_orphaned_media_count' );
-		$remaining = $orphans['count'] - $result['deleted'];
-		echo '<div class="notice notice-success"><p>' . intval( $result['files'] ) . ' sahipsiz görsel silindi.' . ( $remaining > 0 ? ' Hâlâ ' . intval( $remaining ) . ' tane kaldı, butona tekrar bas.' : ' Hepsi temizlendi.' ) . '</p></div>';
-	}
-
 	if ( isset( $_POST['veng_oh_delete_sputnik_posts'] ) && check_admin_referer( 'veng_oh_settings' ) ) {
 		$sputnik = veng_oh_count_sputnik_posts();
 		$batch = array_slice( $sputnik['ids'], 0, 200 );
@@ -1785,7 +1732,6 @@ function veng_oh_settings_page() {
 	}
 
 	$api_key = get_option( 'veng_oh_anthropic_api_key', '' );
-	$auto_publish = get_option( 'veng_oh_auto_publish', '1' ) === '1';
 	$last = get_option( 'veng_oh_last_run' );
 	$next_cron = wp_next_scheduled( 'veng_oh_import_event' );
 	$daily_count = veng_oh_get_daily_count();
@@ -1813,23 +1759,10 @@ function veng_oh_settings_page() {
 					</td>
 				</tr>
 				<tr>
-					<th>Otomatik yayınla</th>
-					<td>
-						<label><input type="checkbox" name="veng_oh_auto_publish" <?php checked( $auto_publish ); ?> /> Çekilen haberleri direkt yayınla (kapalıysa taslak olarak eklenir)</label>
-					</td>
-				</tr>
-				<tr>
 					<th><label for="veng_oh_monthly_budget">Aylık Claude bütçesi ($)</label></th>
 					<td>
 						<input type="number" step="1" min="1" id="veng_oh_monthly_budget" name="veng_oh_monthly_budget" value="<?php echo esc_attr( veng_oh_monthly_budget() ); ?>" class="small-text" />
 						<p class="description">Tahmini aylık harcama bu rakama ulaşınca yeni haber üretimi ay sonuna kadar durur. Eklentinin kendi sayacına göredir (yaklaşık); Anthropic Console'daki harcama sınırını da ayrıca koy.</p>
-					</td>
-				</tr>
-				<tr>
-					<th><label for="veng_oh_mezopotamya_url">Mezopotamya Ajansı RSS Adresi</label></th>
-					<td>
-						<input type="text" id="veng_oh_mezopotamya_url" name="veng_oh_mezopotamya_url" value="<?php echo esc_attr( get_option( 'veng_oh_mezopotamya_url', '' ) ); ?>" class="regular-text" placeholder="https://mezopotamyaajansiXX.com/feed/" />
-						<p class="description">Bu kaynağın alan adı mahkeme kararıyla sık sık engelleniyor. Otomatik takip kurulmadı — alan adı değiştiğinde yeni adresi buraya kendin yapıştır, boş bırakırsan bu kaynak taramaya hiç dahil edilmez.</p>
 					</td>
 				</tr>
 			</table>
@@ -1837,19 +1770,12 @@ function veng_oh_settings_page() {
 				<button type="submit" name="veng_oh_save_settings" class="button button-primary">Ayarları Kaydet</button>
 				<button type="submit" name="veng_oh_run_now" class="button">Şimdi Çalıştır</button>
 				<button type="submit" name="veng_oh_reset_daily_count" class="button" onclick="return confirm('Bugünkü sayaç (toplam + Kürt/Dünya/Diğer dağılımı) sıfırlanacak. Yazı silinmez, sadece sayaç. Emin misin?');">Günlük Sayacı Sıfırla</button>
-				<button type="submit" name="veng_oh_backfill_attribution" class="button">Kaynak Notunu Sadeleştir</button>
-				<?php $orphans = veng_oh_stats_cache_get( 'veng_oh_orphaned_media_count' ); ?>
-				<?php if ( $orphans && $orphans['count'] > 0 ) : ?>
-					<button type="submit" name="veng_oh_delete_orphaned_media" class="button" onclick="return confirm('<?php echo esc_js( number_format_i18n( $orphans['count'] ) ); ?> sahipsiz görsel (yaklaşık <?php echo esc_js( size_format( $orphans['bytes'] ) ); ?>) kalıcı olarak silinecek. Emin misin?' );">Sahipsiz Görselleri Sil (<?php echo esc_html( number_format_i18n( $orphans['count'] ) ); ?>, ~<?php echo esc_html( size_format( $orphans['bytes'] ) ); ?>)</button>
-				<?php endif; ?>
 				<?php $sputnik = veng_oh_stats_cache_get( 'veng_oh_sputnik_count' ); ?>
 				<?php if ( $sputnik && $sputnik['count'] > 0 ) : ?>
 					<button type="submit" name="veng_oh_delete_sputnik_posts" class="button" onclick="return confirm('<?php echo esc_js( number_format_i18n( $sputnik['count'] ) ); ?> Sputnik kaynaklı haber çöpe taşınacak (kalıcı silinmez, Çöp Kutusu\'ndan geri alınabilir). Emin misin?' );">Sputnik Haberlerini Çöpe Taşı (<?php echo esc_html( number_format_i18n( $sputnik['count'] ) ); ?>)</button>
 				<?php endif; ?>
 			</p>
 		</form>
-		<p class="description">"Kaynak Notunu Sadeleştir": eski "...habere git" linkli kaynak notunu sade "Güncel Haber Kaynak: X" ile değiştirir.<br>"Sahipsiz Görselleri Sil": hiçbir yazının öne çıkan görseli olmayan VE var olan bir yazıya bağlı olmayan görselleri siler (logo/site ikonu korunur) — sayı sıfırsa buton görünmez.</p>
-
 		<?php veng_oh_render_usage(); ?>
 
 		<h2>Durum</h2>
@@ -1860,43 +1786,68 @@ function veng_oh_settings_page() {
 				<span style="font-size:12.5px;">Haberler sürekli taslağa düşüyorsa sebep muhtemelen bu — "401"/"invalid" geçiyorsa key geçersiz, "429"/"rate" ya da "credit"/"quota" geçiyorsa kota/bakiye bitmiş demektir. console.anthropic.com'dan kontrol et.</span>
 			</p>
 		<?php endif; ?>
-		<p><strong>Toplam otomatik haber:</strong> <?php echo null === $auto_post_count ? 'hesaplanıyor… (1-2 dk sonra sayfayı yenile)' : esc_html( number_format_i18n( $auto_post_count ) ); ?></p>
-		<p><strong>Bugün eklenen:</strong> <?php echo esc_html( number_format_i18n( $daily_count['count'] ) ); ?> / <?php echo esc_html( number_format_i18n( VENG_OH_DAILY_CAP ) ); ?> (sunucuyu yormamak için günlük sınır, gece yarısı sıfırlanır)</p>
-		<p><strong>Bugün bölge dağılımı:</strong> Kürt bölgesi <?php echo esc_html( number_format_i18n( $daily_count['kurdish'] ) ); ?> (hedef: en az <?php echo esc_html( number_format_i18n( VENG_OH_KURDISH_DAILY_MIN ) ); ?>) · Dünya <?php echo esc_html( number_format_i18n( $daily_count['world'] ) ); ?> / <?php echo esc_html( number_format_i18n( VENG_OH_WORLD_DAILY_CAP ) ); ?> (tavan) · Diğer <?php echo esc_html( number_format_i18n( $daily_count['other'] ) ); ?></p>
-		<p><strong>Bugün bölge spor (Amedspor vb., 30 sınırının DIŞINDA ek hak):</strong> <?php echo esc_html( number_format_i18n( $daily_count['bolge_spor'] ) ); ?> / <?php echo esc_html( number_format_i18n( VENG_OH_REGIONAL_SPORTS_DAILY_CAP ) ); ?></p>
-		<p><strong>Bugün kaynak bazlı yayınlanan:</strong>
-			<?php
-			$source_counts = $daily_count['sources'] ?? array();
-			$known_sources = array_unique( array_map( function ( $f ) { return $f['source']; }, veng_oh_feeds() ) );
-			foreach ( $known_sources as $src ) {
-				if ( ! isset( $source_counts[ $src ] ) ) {
-					$source_counts[ $src ] = 0;
+		<?php
+		$dc            = $daily_count;
+		$source_counts = $dc['sources'] ?? array();
+		$cand_by_src   = array();
+		$sel_lines     = array();
+		if ( $last ) {
+			foreach ( (array) $last['lines'] as $line ) {
+				if ( 0 === strpos( $line, 'Seçildi' ) ) {
+					$sel_lines[] = $line;
+				} elseif ( preg_match( '/^(.*)\/[^\/]+: (?:(\d+) aday|alınamadı)$/u', $line, $mm ) ) {
+					$cand_by_src[ $mm[1] ] = ( $cand_by_src[ $mm[1] ] ?? 0 ) + ( isset( $mm[2] ) ? (int) $mm[2] : 0 );
+					if ( ! isset( $mm[2] ) ) {
+						$cand_by_src[ $mm[1] . '|err' ] = true;
+					}
 				}
 			}
-			arsort( $source_counts );
-			$parts = array();
-			foreach ( $source_counts as $src => $cnt ) {
-				$parts[] = esc_html( $src ) . ' ' . esc_html( number_format_i18n( $cnt ) );
-			}
-			echo implode( ' · ', $parts );
-			?>
-		</p>
-		<p><strong>Çalışma sıklığı:</strong> saat başı, her çalışmada en fazla <?php echo esc_html( VENG_OH_RUN_CAP ); ?> haber, sadece <?php echo esc_html( VENG_OH_ACTIVE_HOUR_START ); ?>:00–<?php echo esc_html( VENG_OH_ACTIVE_HOUR_END ); ?>:00 arası (adaylar arasından en önemlileri AI ile seçilir)</p>
-		<?php if ( $last ) : ?>
-			<p><strong>Son tarama:</strong> <?php echo esc_html( $last['time'] ); ?> — <?php echo intval( $last['created'] ); ?> yeni haber eklendi.</p>
-			<ul>
-				<?php foreach ( (array) $last['lines'] as $line ) : ?>
+		}
+		$known_sources = array_values( array_unique( array_map( function ( $f ) { return $f['source']; }, veng_oh_feeds() ) ) );
+		usort( $known_sources, function ( $a, $b ) use ( $source_counts ) {
+			return ( $source_counts[ $b ] ?? 0 ) <=> ( $source_counts[ $a ] ?? 0 );
+		} );
+		?>
+		<table class="widefat striped" style="max-width:900px;text-align:center;">
+			<thead><tr><th>Bugün eklenen</th><th>Kürt bölgesi</th><th>Dünya</th><th>Diğer</th><th>Bölge spor*</th><th>Toplam otomatik haber</th></tr></thead>
+			<tbody><tr>
+				<td><strong><?php echo esc_html( $dc['count'] ); ?> / <?php echo esc_html( VENG_OH_DAILY_CAP ); ?></strong></td>
+				<td><?php echo esc_html( $dc['kurdish'] ); ?> (hedef ≥<?php echo esc_html( VENG_OH_KURDISH_DAILY_MIN ); ?>)</td>
+				<td><?php echo esc_html( $dc['world'] ); ?> / <?php echo esc_html( VENG_OH_WORLD_DAILY_CAP ); ?></td>
+				<td><?php echo esc_html( $dc['other'] ); ?></td>
+				<td><?php echo esc_html( $dc['bolge_spor'] ?? 0 ); ?> / <?php echo esc_html( VENG_OH_REGIONAL_SPORTS_DAILY_CAP ); ?></td>
+				<td><?php echo null === $auto_post_count ? 'hesaplanıyor…' : esc_html( number_format_i18n( $auto_post_count ) ); ?></td>
+			</tr></tbody>
+		</table>
+		<p class="description">* Amedspor/bölge kulüpleri, günlük 30 sınırının dışında ek hak. Saat başı çalışır (<?php echo esc_html( VENG_OH_ACTIVE_HOUR_START ); ?>:00–<?php echo esc_html( VENG_OH_ACTIVE_HOUR_END ); ?>:00), turda en fazla <?php echo esc_html( VENG_OH_RUN_CAP ); ?> haber. Sıradaki: <?php echo $next_cron ? esc_html( date_i18n( 'd.m.Y H:i', $next_cron ) ) : 'planlanmadı'; ?><?php echo $last ? ' · Son tarama: ' . esc_html( $last['time'] ) . ' (' . intval( $last['created'] ) . ' yeni)' : ' · Henüz tarama çalışmadı'; ?></p>
+
+		<h3 style="margin-bottom:6px;">Kaynaklar <span style="font-weight:400;font-size:12px;">(bugün yayın / son taramada aday)</span></h3>
+		<table class="widefat striped" style="max-width:900px;font-size:12.5px;">
+			<tbody>
+			<?php foreach ( array_chunk( $known_sources, 3 ) as $row_sources ) : ?>
+				<tr>
+				<?php foreach ( $row_sources as $src ) : ?>
+					<td><?php echo esc_html( $src ); ?></td>
+					<td style="white-space:nowrap;"><strong><?php echo esc_html( $source_counts[ $src ] ?? 0 ); ?></strong> / <?php echo ! empty( $cand_by_src[ $src . '|err' ] ) ? '<span style="color:#991b1b;">alınamadı</span>' : esc_html( $cand_by_src[ $src ] ?? '-' ); ?></td>
+				<?php endforeach; ?>
+				<?php for ( $i = count( $row_sources ); $i < 3; $i++ ) : ?><td></td><td></td><?php endfor; ?>
+				</tr>
+			<?php endforeach; ?>
+			</tbody>
+		</table>
+
+		<?php if ( $sel_lines ) : ?>
+			<h3 style="margin-bottom:6px;">Son taramada seçilenler</h3>
+			<ul style="margin-top:0;font-size:12.5px;">
+				<?php foreach ( $sel_lines as $line ) : ?>
 					<li><?php echo esc_html( $line ); ?></li>
 				<?php endforeach; ?>
 			</ul>
-		<?php else : ?>
-			<p>Henüz otomatik tarama çalışmadı. "Şimdi Çalıştır" ile ilk taramayı başlatabilirsin.</p>
 		<?php endif; ?>
-		<p><strong>Sıradaki otomatik çalışma:</strong> <?php echo $next_cron ? esc_html( date_i18n( 'd F Y, H:i', $next_cron ) ) : 'planlanmadı'; ?></p>
 
 		<?php if ( $unmarked_by_author ) : ?>
-			<h2>Botun işaretlemediği yazılar (yazara göre)</h2>
-			<p class="description">Bunlar "otomatik haber" etiketi taşımıyor — elle yazılmış olabilir YA DA bu eklentiden önceki eski bir sistemin eklediği kayıtlar olabilir. Güvenlik için otomatik silinmiyor. Aşağıdaki yazar hangisiyse söyle, o yazara ait olanları tek seferde temizleyen bir buton ekleyeyim.</p>
+			<details style="margin-top:14px;"><summary style="cursor:pointer;font-weight:600;">Botun işaretlemediği yazılar (yazara göre)</summary>
+			<p class="description">"Otomatik haber" etiketi taşımayan yazılar: elle yazılmış ya da eski sistemden kalma olabilir. Otomatik silinmez.</p>
 			<table class="widefat striped" style="max-width:700px;">
 				<thead><tr><th>Yazar</th><th>Adet</th><th>En eski</th><th>En yeni</th></tr></thead>
 				<tbody>
@@ -1910,6 +1861,7 @@ function veng_oh_settings_page() {
 					<?php endforeach; ?>
 				</tbody>
 			</table>
+			</details>
 		<?php endif; ?>
 	</div>
 	<?php
