@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Oto Haber AI
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.66
+ * Version: 1.0.67
  * Author: Veng Haber
  */
 
@@ -124,13 +124,13 @@ function veng_oh_feeds() {
 		array( 'url' => 'https://vanhabermerkezi.com/rss.xml', 'category' => 'gundem', 'source' => 'Van Haber Merkezi', 'region' => 'kurdish' ),
 		array( 'url' => 'https://www.wanhaber.com/rss', 'category' => 'gundem', 'source' => 'Wan Haber', 'region' => 'kurdish' ),
 		array( 'url' => 'https://www.mardingzt.com/feed/', 'category' => 'gundem', 'source' => 'Mardin GZT', 'region' => 'kurdish' ),
-		array( 'url' => 'https://mardinhaber.com.tr/rss', 'category' => 'gundem', 'source' => 'Mardin Haber', 'region' => 'kurdish' ),
+		array( 'url' => 'https://mardinhaber.com.tr/rss', 'category' => 'gundem', 'source' => 'Mardin Haber', 'region' => 'kurdish', 'user_agent' => $browser_ua, 'timeout' => 15 ),
 		array( 'url' => 'https://www.sanliurfagazetesi.com/rss', 'category' => 'gundem', 'source' => 'Şanlıurfa Gazetesi', 'region' => 'kurdish' ),
 		array( 'url' => 'https://www.batmanburada.com.tr/feed/', 'category' => 'gundem', 'source' => 'Batman Burada', 'region' => 'kurdish' ),
 		array( 'url' => 'https://www.batmanpusula.com/rss', 'category' => 'gundem', 'source' => 'Batman Pusula', 'region' => 'kurdish' ),
 		array( 'url' => 'https://www.colemerghaber.com/rss', 'category' => 'gundem', 'source' => 'Çolemêrg Haber', 'region' => 'kurdish' ),
 		array( 'url' => 'https://sirnakhaber73.com/service/rss.php', 'category' => 'gundem', 'source' => 'Şırnak Haber73', 'region' => 'kurdish' ),
-		array( 'url' => 'https://www.siirttesonsoz.com/xml/rss.php', 'category' => 'gundem', 'source' => 'Siirt\'te Sonsöz', 'region' => 'kurdish' ),
+		array( 'url' => 'https://www.siirttesonsoz.com/xml/rss.php', 'category' => 'gundem', 'source' => 'Siirt\'te Sonsöz', 'region' => 'kurdish', 'user_agent' => $browser_ua, 'timeout' => 20 ),
 		array( 'url' => 'https://www.agri04haber.com/rss', 'category' => 'gundem', 'source' => 'Ağrı04Haber', 'region' => 'kurdish' ),
 		array( 'url' => 'https://haber49.net/rss', 'category' => 'gundem', 'source' => 'Haber49 (Muş)', 'region' => 'kurdish' ),
 		array( 'url' => 'https://www.bitlishaber13.net/rss', 'category' => 'gundem', 'source' => 'Bitlis Haber13', 'region' => 'kurdish' ),
@@ -581,7 +581,7 @@ function veng_oh_render_usage() {
 	}
 	arsort( $by_purpose );
 	$total7 = array_sum( $by_purpose );
-	$colors = array( 'yeniden-yaz' => '#7c5cff', 'harman' => '#22d3ee', 'gruplama' => '#f59e0b' );
+	$colors = array( 'yeniden-yaz' => '#8b5cf6', 'harman' => '#06b6d4', 'gruplama' => '#f59e0b' );
 	$k      = function ( $n ) {
 		return $n >= 1000 ? number_format( $n / 1000, $n >= 100000 ? 0 : 1 ) . 'K' : (string) (int) $n;
 	};
@@ -1146,15 +1146,17 @@ function veng_oh_run_import_locked() {
 	// 1. Aşama: tüm kaynaklardan henüz eklenmemiş aday haberleri topla (hiçbirini
 	// henüz yazmadan) — böylece hangisinin önemli olduğuna, sadece ilk bulunana
 	// değil, tüm adaylara bakarak karar verilebilir.
-	$candidates = array();
+	$candidates  = array();
+	$feed_errors = array();
 	foreach ( veng_oh_feeds() as $feed ) {
 		$res = wp_remote_get( $feed['url'], array(
-			'timeout'    => 8, // 24 kaynak sırayla çekiliyor; yavaş/ölü kaynaklar tek taramayı dakikalarca uzatıp worker'ı tıkamasın diye düşürüldü.
+			'timeout'    => $feed['timeout'] ?? 8, // 24 kaynak sırayla çekiliyor; yavaş/ölü kaynaklar tek taramayı dakikalarca uzatıp worker'ı tıkamasın diye düşürüldü.
 			'user-agent' => $feed['user_agent'] ?? 'Mozilla/5.0 (compatible; VengHaberBot/1.0; +https://venghaber.com)',
 			'sslverify'  => $feed['sslverify'] ?? true,
 		) );
 		if ( is_wp_error( $res ) || wp_remote_retrieve_response_code( $res ) !== 200 ) {
 			$lines[] = $feed['source'] . '/' . $feed['category'] . ': alınamadı';
+			$feed_errors[ $feed['source'] ] = is_wp_error( $res ) ? mb_substr( $res->get_error_message(), 0, 120 ) : 'HTTP ' . wp_remote_retrieve_response_code( $res );
 			continue;
 		}
 		$type = $feed['type'] ?? 'rss';
@@ -1312,6 +1314,7 @@ function veng_oh_run_import_locked() {
 	}
 
 	update_option( 'veng_oh_daily_count', $daily );
+	update_option( 'veng_oh_feed_errors', $feed_errors, false );
 
 	update_option( 'veng_oh_last_run', array(
 		'time'    => current_time( 'mysql' ),
@@ -1816,7 +1819,10 @@ function veng_oh_settings_page() {
 		array( 'Diğer', (int) $dc['other'], VENG_OH_DAILY_CAP, '' ),
 		array( 'Bölge spor', (int) ( $dc['bolge_spor'] ?? 0 ), VENG_OH_REGIONAL_SPORTS_DAILY_CAP, 'ek hak' ),
 	);
-	$sel_show = array_slice( $sel_lines, 0, 4 );
+	$sel_show    = array_slice( $sel_lines, 0, 4 );
+	$feed_errors = get_option( 'veng_oh_feed_errors', array() );
+	$feed_errors = is_array( $feed_errors ) ? $feed_errors : array();
+	$rcol        = array( array( '#ef4444', '#22c55e', '#facc15' ), array( '#38bdf8', '#6366f1', '' ), array( '#94a3b8', '#8b5cf6', '' ), array( '#fb923c', '#ec4899', '' ) );
 	?>
 	<div class="wrap vo">
 		<hr class="wp-header-end" style="display:none">
@@ -1839,12 +1845,12 @@ function veng_oh_settings_page() {
 			.vo .notice{position:fixed;top:46px;right:24px;z-index:100000;width:min(420px,90vw);margin:0;padding:12px 16px;border-radius:14px;border:0;border-left:4px solid var(--acc);box-shadow:0 20px 40px -16px rgba(15,23,42,.45);animation:vo-toast 7s ease forwards}
 			#wpbody-content>.notice{position:fixed;top:46px;right:24px;z-index:100000;width:min(420px,90vw);margin:0;border-radius:14px;box-shadow:0 20px 40px -16px rgba(15,23,42,.45);animation:vo-toast 7s ease forwards}
 
-			.vo-hero{flex:none;position:relative;overflow:hidden;border-radius:22px;padding:18px 26px 18px;color:#fff;background:radial-gradient(700px 300px at 85% -20%,rgba(124,92,255,.65),transparent 60%),radial-gradient(600px 260px at 0% 120%,rgba(34,211,238,.32),transparent 60%),linear-gradient(120deg,#070a1c,#141a4a,#2a1672,#0f1d5e);background-size:100% 100%,100% 100%,240% 240%;animation:vo-aurora 14s ease-in-out infinite alternate;box-shadow:0 24px 56px -26px rgba(32,24,120,.65)}
+			.vo-hero{flex:none;position:relative;overflow:hidden;border-radius:22px;padding:18px 26px 18px;color:#fff;background:radial-gradient(520px 260px at 88% -25%,rgba(236,72,153,.55),transparent 62%),radial-gradient(560px 280px at 62% 130%,rgba(250,204,21,.22),transparent 60%),radial-gradient(620px 260px at -2% 115%,rgba(34,211,238,.38),transparent 60%),radial-gradient(500px 240px at 40% -30%,rgba(124,92,255,.6),transparent 60%),linear-gradient(120deg,#070a1c,#1a1459,#3b1a7a,#0b2a63);background-size:100% 100%,100% 100%,100% 100%,100% 100%,260% 260%;animation:vo-aurora 14s ease-in-out infinite alternate;box-shadow:0 24px 56px -26px rgba(32,24,120,.65)}
 			.vo-hero:after{content:"";position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.04) 1px,transparent 1px);background-size:32px 32px;-webkit-mask-image:linear-gradient(180deg,#000,transparent 90%);mask-image:linear-gradient(180deg,#000,transparent 90%);pointer-events:none}
 			.vo-hero>*{position:relative;z-index:1}
 			.vo-orb{position:absolute!important;border-radius:50%;filter:blur(40px);opacity:.5;pointer-events:none;animation:vo-float 11s ease-in-out infinite}
 			.vo-orb.a{width:220px;height:220px;right:12%;top:-90px;background:#7c5cff}
-			.vo-orb.b{width:180px;height:180px;left:30%;bottom:-100px;background:#22d3ee;animation-delay:-5s}
+			.vo-orb.b{width:180px;height:180px;left:30%;bottom:-100px;background:#22d3ee;animation-delay:-5s}.vo-orb.c{width:150px;height:150px;left:58%;top:-70px;background:#ec4899;animation-delay:-8s;opacity:.38}
 			.vo-top{display:flex;justify-content:space-between;gap:18px;align-items:center}
 			.vo-kicker{display:inline-flex;gap:10px;align-items:center;font-size:10px;letter-spacing:.26em;font-weight:700;color:#b9c3ff;text-transform:uppercase}
 			.vo-kicker i{width:22px;height:2px;background:linear-gradient(90deg,var(--acc2),var(--acc));border-radius:2px}
@@ -1856,7 +1862,7 @@ function veng_oh_settings_page() {
 			button.vo-pill{cursor:pointer}button.vo-pill:hover{background:rgba(255,255,255,.17)}
 			.vo-pill b{font-weight:700;color:#fff}
 			.vo-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#94a3b8;flex:none}
-			.vo-dot.ok{background:var(--ok);animation:vo-ping 2s infinite}
+			.vo-dot.ok{background:var(--ok);animation:vo-ping 2s infinite}.vo-dot.mid{background:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.25)}
 			.vo-dot.bad{background:var(--bad);box-shadow:0 0 0 3px rgba(239,68,68,.3)}
 			.vo-ring{position:relative;width:78px;height:78px;flex:none}
 			.vo-ring svg{width:100%;height:100%;transform:rotate(-90deg)}
@@ -1867,14 +1873,14 @@ function veng_oh_settings_page() {
 			.vo-ring .mid b{font-size:14px;font-weight:800;font-variant-numeric:tabular-nums}
 			.vo-ring .mid small{font-size:8.5px;letter-spacing:.14em;text-transform:uppercase;color:#aab4ee;font-weight:700}
 			.vo-kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-top:14px}
-			.vo-kpi{padding:11px 14px;border-radius:15px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);animation:vo-up .7s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--i,0)*90ms + 150ms);transition:transform .25s,background .25s}
-			.vo-kpi:hover{transform:translateY(-3px);background:rgba(255,255,255,.12)}
-			.vo-kpi small{display:block;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:#aab4ee;font-weight:700}
+			.vo-kpi{position:relative;overflow:hidden;padding:11px 14px;border-radius:15px;background:linear-gradient(160deg,rgba(255,255,255,.11),rgba(255,255,255,.04));border:1px solid rgba(255,255,255,.16);border-top:2px solid var(--k1,#22d3ee);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);animation:vo-up .7s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--i,0)*90ms + 150ms);transition:transform .25s,background .25s}
+			.vo-kpi:hover{transform:translateY(-3px);background:linear-gradient(160deg,rgba(255,255,255,.17),rgba(255,255,255,.06))}.vo-kpi:before{content:"";position:absolute;right:-30px;top:-30px;width:110px;height:110px;border-radius:50%;background:radial-gradient(circle,var(--k1,#22d3ee),transparent 68%);opacity:.32;pointer-events:none}.vo-kpi>*{position:relative}
+			.vo-kpi small{display:block;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--k1,#aab4ee);font-weight:800;filter:brightness(1.35)}
 			.vo-kpi strong{display:block;margin:4px 0 8px;font-size:24px;line-height:1;font-weight:800;letter-spacing:-.025em;font-variant-numeric:tabular-nums}
 			.vo-kpi strong span{font-size:12px;color:#aab4ee;font-weight:600;margin-left:4px;letter-spacing:0}
 			.vo-kpi .vo-sm{display:block;font-size:10.5px;color:#aab4ee;margin-top:-3px}
 			.vo-bar{position:relative;height:6px;border-radius:99px;background:rgba(255,255,255,.15);overflow:hidden}
-			.vo-bar>i{position:relative;display:block;width:var(--w);height:100%;border-radius:99px;background:linear-gradient(90deg,var(--acc2),var(--acc));overflow:hidden;animation:vo-grow 1.2s .35s cubic-bezier(.2,.8,.2,1) both}
+			.vo-bar>i{position:relative;display:block;width:var(--w);height:100%;border-radius:99px;background:linear-gradient(90deg,var(--k1,#22d3ee),var(--km,var(--k2,#7c5cff)),var(--k2,#7c5cff));overflow:hidden;animation:vo-grow 1.2s .35s cubic-bezier(.2,.8,.2,1) both}
 			.vo-bar>i:after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.6),transparent);transform:translateX(-100%);animation:vo-shine 2.6s 1.6s infinite}
 			.vo-bar.warn>i{background:linear-gradient(90deg,#fbbf24,#f97316)}
 			.vo-bar.bad>i{background:linear-gradient(90deg,#fb7185,#ef4444)}
@@ -1887,7 +1893,7 @@ function veng_oh_settings_page() {
 			.vo-card:hover{box-shadow:0 1px 2px rgba(15,23,42,.05),0 26px 50px -26px rgba(60,41,200,.45)}
 			.vo-card>*{position:relative}
 			.vo-card h2{display:flex;align-items:center;gap:9px;margin:0 0 3px;padding:0;font-size:14px;font-weight:750;letter-spacing:-.01em;color:var(--ink)}
-			.vo-card h2 em{font-style:normal;font-size:9.5px;font-weight:700;color:#5b3df5;background:#efeaff;padding:2px 9px;border-radius:99px;letter-spacing:.06em}
+			.vo-card h2 em{font-style:normal;font-size:9.5px;font-weight:800;color:var(--c1,#5b3df5);background:color-mix(in srgb,var(--c1,#7c5cff) 12%,#fff);padding:2px 9px;border-radius:99px;letter-spacing:.06em}.vo-card:after{content:"";position:absolute;left:22px;right:22px;top:0;height:3px;border-radius:0 0 8px 8px;background:linear-gradient(90deg,var(--c1,#7c5cff),var(--c2,#22d3ee));opacity:.9}.vo-ico{display:inline-grid;place-items:center;flex:none;width:28px;height:28px;border-radius:9px;background:linear-gradient(135deg,var(--c1,#7c5cff),var(--c2,#22d3ee));box-shadow:0 8px 16px -8px var(--c1,#7c5cff)}.vo-ico svg{width:15px;height:15px;stroke:#fff;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 			.vo-desc{margin:0 0 11px;font-size:11.5px;color:var(--mut);line-height:1.5}
 			.vo-field{margin-bottom:11px}
 			.vo-field label{display:block;font-size:10.5px;font-weight:700;color:#334155;margin-bottom:5px;letter-spacing:.05em;text-transform:uppercase}
@@ -1898,11 +1904,11 @@ function veng_oh_settings_page() {
 			.vo-row{display:grid;grid-template-columns:120px 1fr;gap:14px;align-items:start}
 			.vo-btns{display:flex;flex-wrap:wrap;gap:8px}
 			.vo-btn{appearance:none;border:0;cursor:pointer;height:38px;padding:0 16px;border-radius:11px;font-size:12px;font-weight:700;letter-spacing:.01em;transition:all .18s;font-family:inherit;position:relative;overflow:hidden}
-			.vo-btn.pri{color:#fff;background:linear-gradient(135deg,#7c5cff,#5b3df5);box-shadow:0 10px 20px -10px rgba(91,61,245,.9)}
+			.vo-btn.pri{color:#fff;background:linear-gradient(135deg,#8b5cf6,#d946ef 60%,#ec4899);box-shadow:0 10px 22px -10px rgba(217,70,239,.9)}
 			.vo-btn.pri:after{content:"";position:absolute;inset:0;background:linear-gradient(100deg,transparent 30%,rgba(255,255,255,.35),transparent 70%);transform:translateX(-120%);transition:transform .6s}
 			.vo-btn.pri:hover:after{transform:translateX(120%)}
 			.vo-btn.pri:hover{transform:translateY(-1px);box-shadow:0 14px 24px -10px rgba(91,61,245,.95)}
-			.vo-btn.sec{color:#4338ca;background:#eef0ff}.vo-btn.sec:hover{background:#e2e5ff;transform:translateY(-1px)}
+			.vo-btn.sec{color:#0f766e;background:linear-gradient(135deg,#ccfbf1,#cffafe)}.vo-btn.sec:hover{background:linear-gradient(135deg,#99f6e4,#a5f3fc);transform:translateY(-1px)}
 			.vo-btn.gho{color:#475569;background:#fff;border:1.5px solid var(--line)}.vo-btn.gho:hover{border-color:#cbd5e1;background:#f8fafc}
 			.vo-region{display:grid;gap:11px;margin-top:6px}
 			.vo-r{display:grid;grid-template-columns:92px 1fr 62px;gap:12px;align-items:center;font-size:12px}
@@ -1925,7 +1931,7 @@ function veng_oh_settings_page() {
 			.vo-donut .mid b{font-size:17px;font-weight:800;letter-spacing:-.02em}
 			.vo-donut .mid small{font-size:9.5px;color:var(--mut);font-weight:600}
 			.vo-ustats{flex:1;display:grid;gap:7px}
-			.vo-ustats div{display:flex;justify-content:space-between;align-items:baseline;padding:6px 11px;border-radius:10px;background:#f8f9fd}
+			.vo-ustats div{display:flex;justify-content:space-between;align-items:baseline;padding:6px 11px;border-radius:10px;background:linear-gradient(90deg,#f5f3ff,#ecfeff)}
 			.vo-ustats small{font-size:10.5px;color:var(--mut);font-weight:600}
 			.vo-ustats b{font-size:13px;font-weight:800;font-variant-numeric:tabular-nums}
 			.vo-stack{display:flex;gap:2px;height:9px;margin-top:12px;border-radius:99px;overflow:hidden;background:#eceffa}
@@ -1933,11 +1939,11 @@ function veng_oh_settings_page() {
 			.vo-legend{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:7px;font-size:11px;color:#475569}
 			.vo-legend i{display:inline-block;width:8px;height:8px;border-radius:3px;margin-right:5px}
 			.vo-table{width:100%;border-collapse:separate;border-spacing:0;margin-top:8px;font-size:11.5px}
-			.vo-table th{text-align:left;padding:6px 8px;font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:#94a3b8;font-weight:700;border-bottom:1px solid var(--line)}
+			.vo-table th{text-align:left;padding:6px 8px;font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:#8b5cf6;font-weight:700;border-bottom:1px solid var(--line)}
 			.vo-table td{padding:6px 8px;border-bottom:1px solid #f1f3fa;color:#334155;font-variant-numeric:tabular-nums}
 			.vo-table td:last-child,.vo-table th:last-child{text-align:right}
 			.vo-src-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-top:4px}
-			.vo-src{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;align-items:center;padding:7px 10px;border-radius:11px;background:#f8f9fd;border:1px solid #eef0f8;font-size:11.5px;animation:vo-pop .5s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--n,0)*28ms + 600ms);transition:transform .2s,border-color .2s,background .2s}
+			.vo-src{border-left:3px solid var(--sc,#e2e8f0);display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;align-items:center;padding:7px 10px;border-radius:11px;background:#f8f9fd;border:1px solid #eef0f8;font-size:11.5px;animation:vo-pop .5s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--n,0)*28ms + 600ms);transition:transform .2s,border-color .2s,background .2s}
 			.vo-src:hover{transform:translateY(-2px);border-color:#cfc6ff;background:#f4f1ff}
 			.vo-src .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;color:#334155}
 			.vo-src .n{font-variant-numeric:tabular-nums;color:var(--mut);font-size:11px;white-space:nowrap}
@@ -1945,8 +1951,7 @@ function veng_oh_settings_page() {
 			.vo-tl{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:7px}
 			.vo-tl li{display:flex;gap:9px;align-items:center;padding:8px 11px;border-radius:12px;background:#f8f9fd;border:1px solid #eef0f8;font-size:11.5px;line-height:1.35;color:#1e293b;margin:0;min-width:0;animation:vo-slide .55s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--n,0)*110ms + 700ms)}
 			.vo-tl li span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-			.vo-tag{flex:none;padding:2px 9px;border-radius:99px;font-size:9.5px;font-weight:700;letter-spacing:.03em;color:#4338ca;background:#e9e8ff;white-space:nowrap}
-			.vo-tag.sp{color:#047857;background:#d9f7ec}
+			.vo-tag{flex:none;padding:2px 9px;border-radius:99px;font-size:9.5px;font-weight:700;letter-spacing:.03em;white-space:nowrap}.vo-tag.t0{color:#5b21b6;background:#ede9fe}.vo-tag.t1{color:#0e7490;background:#cffafe}.vo-tag.t2{color:#be185d;background:#fce7f3}.vo-tag.t3{color:#b45309;background:#fef3c7}.vo-tag.t4{color:#047857;background:#d1fae5}.vo-tag.t5{color:#1d4ed8;background:#dbeafe}
 			.vo-empty{padding:14px;border-radius:13px;background:#f8f9fd;border:1px dashed #d9def0;color:var(--mut);font-size:12px;text-align:center;margin-top:8px}
 			dialog.vo-dlg{border:0;border-radius:22px;padding:22px 26px;max-width:620px;width:92vw;box-shadow:0 40px 80px -20px rgba(15,23,42,.55);font-family:inherit}
 			dialog.vo-dlg::backdrop{background:rgba(10,14,36,.55);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
@@ -1962,11 +1967,11 @@ function veng_oh_settings_page() {
 
 		<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
 			<linearGradient id="vo-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22d3ee"/><stop offset="1" stop-color="#7c5cff"/></linearGradient>
-			<linearGradient id="vo-g2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22d3ee"/><stop offset="1" stop-color="#7c5cff"/></linearGradient>
+			<linearGradient id="vo-g2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22d3ee"/><stop offset=".55" stop-color="#8b5cf6"/><stop offset="1" stop-color="#ec4899"/></linearGradient>
 		</defs></svg>
 
 		<header class="vo-hero">
-			<span class="vo-orb a"></span><span class="vo-orb b"></span>
+			<span class="vo-orb a"></span><span class="vo-orb b"></span><span class="vo-orb c"></span>
 			<div class="vo-top">
 				<div>
 					<span class="vo-kicker"><i></i>Veng Haber · Otomasyon</span>
@@ -1989,18 +1994,18 @@ function veng_oh_settings_page() {
 				</div>
 			</div>
 			<div class="vo-kpis">
-				<div class="vo-kpi" style="--i:0"><small>Bugün eklenen</small><strong><span style="margin:0;font-size:inherit;color:inherit;font-weight:inherit" data-count="<?php echo esc_attr( $dc['count'] ); ?>"><?php echo esc_html( $dc['count'] ); ?></span><span>/ <?php echo esc_html( VENG_OH_DAILY_CAP ); ?></span></strong><div class="vo-bar"><i style="--w:<?php echo esc_attr( $pct( $dc['count'], VENG_OH_DAILY_CAP ) ); ?>%"></i></div></div>
-				<div class="vo-kpi" style="--i:1"><small>Kürt bölgesi</small><strong><span style="margin:0;font-size:inherit;color:inherit;font-weight:inherit" data-count="<?php echo esc_attr( $dc['kurdish'] ); ?>"><?php echo esc_html( $dc['kurdish'] ); ?></span><span>/ <?php echo esc_html( VENG_OH_KURDISH_DAILY_MIN ); ?> hedef</span></strong><div class="vo-bar"><i style="--w:<?php echo esc_attr( $pct( $dc['kurdish'], VENG_OH_KURDISH_DAILY_MIN ) ); ?>%"></i></div></div>
-				<div class="vo-kpi" style="--i:2"><small>Bölge spor</small><strong><span style="margin:0;font-size:inherit;color:inherit;font-weight:inherit" data-count="<?php echo esc_attr( $dc['bolge_spor'] ?? 0 ); ?>"><?php echo esc_html( $dc['bolge_spor'] ?? 0 ); ?></span><span>/ <?php echo esc_html( VENG_OH_REGIONAL_SPORTS_DAILY_CAP ); ?></span></strong><div class="vo-bar"><i style="--w:<?php echo esc_attr( $pct( $dc['bolge_spor'] ?? 0, VENG_OH_REGIONAL_SPORTS_DAILY_CAP ) ); ?>%"></i></div></div>
-				<div class="vo-kpi" style="--i:3"><small>Bu ay (tahmini)</small><strong>$<?php echo esc_html( number_format( $month['cost'], 2 ) ); ?><span>/ $<?php echo esc_html( number_format( $budget, 0 ) ); ?></span></strong><div class="vo-bar <?php echo esc_attr( $mclass ); ?>"><i style="--w:<?php echo esc_attr( $mpct ); ?>%"></i></div></div>
-				<div class="vo-kpi" style="--i:4"><small>Toplam otomatik haber</small><strong><?php if ( null === $auto_post_count ) : ?>…<?php else : ?><span style="margin:0;font-size:inherit;color:inherit;font-weight:inherit" data-count="<?php echo esc_attr( $auto_post_count ); ?>" data-fmt="1"><?php echo esc_html( number_format_i18n( $auto_post_count ) ); ?></span><?php endif; ?></strong><span class="vo-sm"><?php echo null === $auto_post_count ? 'arka planda hesaplanıyor' : 'yayında'; ?></span></div>
+				<div class="vo-kpi" style="--i:0;--k1:#38bdf8;--k2:#2563eb"><small>Bugün eklenen</small><strong><span style="margin:0;font-size:inherit;color:inherit;font-weight:inherit" data-count="<?php echo esc_attr( $dc['count'] ); ?>"><?php echo esc_html( $dc['count'] ); ?></span><span>/ <?php echo esc_html( VENG_OH_DAILY_CAP ); ?></span></strong><div class="vo-bar"><i style="--w:<?php echo esc_attr( $pct( $dc['count'], VENG_OH_DAILY_CAP ) ); ?>%"></i></div></div>
+				<div class="vo-kpi" style="--i:1;--k1:#ef4444;--km:#facc15;--k2:#22c55e"><small>Kürt bölgesi</small><strong><span style="margin:0;font-size:inherit;color:inherit;font-weight:inherit" data-count="<?php echo esc_attr( $dc['kurdish'] ); ?>"><?php echo esc_html( $dc['kurdish'] ); ?></span><span>/ <?php echo esc_html( VENG_OH_KURDISH_DAILY_MIN ); ?> hedef</span></strong><div class="vo-bar"><i style="--w:<?php echo esc_attr( $pct( $dc['kurdish'], VENG_OH_KURDISH_DAILY_MIN ) ); ?>%"></i></div></div>
+				<div class="vo-kpi" style="--i:2;--k1:#fb923c;--k2:#ec4899"><small>Bölge spor</small><strong><span style="margin:0;font-size:inherit;color:inherit;font-weight:inherit" data-count="<?php echo esc_attr( $dc['bolge_spor'] ?? 0 ); ?>"><?php echo esc_html( $dc['bolge_spor'] ?? 0 ); ?></span><span>/ <?php echo esc_html( VENG_OH_REGIONAL_SPORTS_DAILY_CAP ); ?></span></strong><div class="vo-bar"><i style="--w:<?php echo esc_attr( $pct( $dc['bolge_spor'] ?? 0, VENG_OH_REGIONAL_SPORTS_DAILY_CAP ) ); ?>%"></i></div></div>
+				<div class="vo-kpi" style="--i:3;--k1:#c084fc;--k2:#d946ef"><small>Bu ay (tahmini)</small><strong>$<?php echo esc_html( number_format( $month['cost'], 2 ) ); ?><span>/ $<?php echo esc_html( number_format( $budget, 0 ) ); ?></span></strong><div class="vo-bar <?php echo esc_attr( $mclass ); ?>"><i style="--w:<?php echo esc_attr( $mpct ); ?>%"></i></div></div>
+				<div class="vo-kpi" style="--i:4;--k1:#fbbf24;--k2:#f97316"><small>Toplam otomatik haber</small><strong><?php if ( null === $auto_post_count ) : ?>…<?php else : ?><span style="margin:0;font-size:inherit;color:inherit;font-weight:inherit" data-count="<?php echo esc_attr( $auto_post_count ); ?>" data-fmt="1"><?php echo esc_html( number_format_i18n( $auto_post_count ) ); ?></span><?php endif; ?></strong><span class="vo-sm"><?php echo null === $auto_post_count ? 'arka planda hesaplanıyor' : 'yayında'; ?></span></div>
 			</div>
 		</header>
 
 		<div class="vo-main">
 			<div class="vo-col">
-				<section class="vo-card" style="--i:0">
-					<h2>Ayarlar</h2>
+				<section class="vo-card" style="--i:0;--c1:#8b5cf6;--c2:#ec4899">
+					<h2><span class="vo-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg></span>Ayarlar</h2>
 					<p class="vo-desc">Claude bağlantısı ve aylık harcama sınırı.</p>
 					<form method="post">
 						<?php wp_nonce_field( 'veng_oh_settings' ); ?>
@@ -2028,17 +2033,17 @@ function veng_oh_settings_page() {
 					</form>
 				</section>
 
-				<section class="vo-card" style="--i:1">
-					<h2>Durum <em>BUGÜN</em></h2>
+				<section class="vo-card" style="--i:1;--c1:#10b981;--c2:#22d3ee">
+					<h2><span class="vo-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></span>Durum <em>BUGÜN</em></h2>
 					<p class="vo-desc">Günlük sınıra ve bölge hedeflerine göre ilerleme.</p>
 					<?php if ( $has_api_error ) : ?>
 						<div class="vo-alert"><strong>Son API hatası · <?php echo esc_html( $last_api_error['time'] ); ?></strong><?php echo esc_html( mb_substr( $last_api_error['reason'], 0, 150 ) ); ?></div>
 					<?php endif; ?>
 					<div class="vo-region">
-						<?php foreach ( $regions as $rg ) : ?>
+						<?php foreach ( $regions as $ri => $rg ) : ?>
 							<div class="vo-r">
 								<span><?php echo esc_html( $rg[0] ); ?></span>
-								<div class="vo-bar"><i style="--w:<?php echo esc_attr( $pct( $rg[1], $rg[2] ) ); ?>%"></i></div>
+								<div class="vo-bar"><i style="--w:<?php echo esc_attr( $pct( $rg[1], $rg[2] ) ); ?>%;--k1:<?php echo esc_attr( $rcol[ $ri ][0] ); ?>;--k2:<?php echo esc_attr( $rcol[ $ri ][1] ); ?>;<?php echo $rcol[ $ri ][2] ? '--km:' . esc_attr( $rcol[ $ri ][2] ) . ';' : ''; ?>"></i></div>
 								<b><?php echo esc_html( $rg[1] ); ?> <small>/ <?php echo esc_html( $rg[2] ); ?></small></b>
 							</div>
 						<?php endforeach; ?>
@@ -2048,13 +2053,13 @@ function veng_oh_settings_page() {
 			</div>
 
 			<div class="vo-col">
-				<section class="vo-card" style="--i:2">
-					<h2>Claude kullanımı <em>SON 7 GÜN</em></h2>
+				<section class="vo-card" style="--i:2;--c1:#f59e0b;--c2:#ef4444">
+					<h2><span class="vo-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.5 9.5h4a1.5 1.5 0 010 3h-3a1.5 1.5 0 000 3h4"/></svg></span>Claude kullanımı <em>SON 7 GÜN</em></h2>
 					<?php veng_oh_render_usage(); ?>
 				</section>
 
-				<section class="vo-card" style="--i:3">
-					<h2>Son taramada seçilenler</h2>
+				<section class="vo-card" style="--i:3;--c1:#06b6d4;--c2:#3b82f6">
+					<h2><span class="vo-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg></span>Son taramada seçilenler</h2>
 					<?php if ( $sel_show ) : ?>
 						<ul class="vo-tl">
 							<?php foreach ( $sel_show as $n => $line ) : ?>
@@ -2068,7 +2073,7 @@ function veng_oh_settings_page() {
 									$ttl = $line;
 								}
 								?>
-								<li style="--n:<?php echo (int) $n; ?>"><span class="vo-tag<?php echo $is_sp ? ' sp' : ''; ?>"><?php echo esc_html( ( $is_sp ? 'Spor · ' : '' ) . $tag ); ?></span><span title="<?php echo esc_attr( $ttl ); ?>"><?php echo esc_html( $ttl ); ?></span></li>
+								<li style="--n:<?php echo (int) $n; ?>"><span class="vo-tag t<?php echo (int) ( abs( crc32( $tag ) ) % 6 ); ?>"><?php echo esc_html( ( $is_sp ? 'Spor · ' : '' ) . $tag ); ?></span><span title="<?php echo esc_attr( $ttl ); ?>"><?php echo esc_html( $ttl ); ?></span></li>
 							<?php endforeach; ?>
 						</ul>
 					<?php else : ?>
@@ -2078,17 +2083,20 @@ function veng_oh_settings_page() {
 			</div>
 
 			<div class="vo-col" style="grid-template-rows:minmax(0,1fr)">
-				<section class="vo-card" style="--i:4">
-					<h2>Kaynaklar <em><?php echo esc_html( count( $known_sources ) ); ?></em></h2>
+				<section class="vo-card" style="--i:4;--c1:#ec4899;--c2:#f97316">
+					<h2><span class="vo-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12a7 7 0 017 7M5 5a14 14 0 0114 14"/><circle cx="6" cy="18" r="1.4"/></svg></span>Kaynaklar <em><?php echo esc_html( count( $known_sources ) ); ?></em></h2>
 					<p class="vo-desc">Bugün yayınlanan / son taramada bulunan aday.</p>
 					<div class="vo-src-grid">
 						<?php foreach ( $known_sources as $n => $src ) : ?>
 							<?php
 							$err  = ! empty( $cand_by_src[ $src . '|err' ] );
 							$cand = $cand_by_src[ $src ] ?? null;
-							$dot  = $err ? 'bad' : ( $cand ? 'ok' : '' );
+							$pubd = (int) ( $source_counts[ $src ] ?? 0 );
+							$dot  = $err ? 'bad' : ( $pubd > 0 ? 'ok' : ( $cand ? 'mid' : '' ) );
+							$sc   = array( 'bad' => '#ef4444', 'ok' => '#10b981', 'mid' => '#f59e0b', '' => '#e2e8f0' )[ $dot ];
+							$etip = $err && ! empty( $feed_errors[ $src ] ) ? $src . ' — ' . $feed_errors[ $src ] : $src;
 							?>
-							<div class="vo-src" style="--n:<?php echo (int) $n; ?>">
+							<div class="vo-src" style="--n:<?php echo (int) $n; ?>;--sc:<?php echo esc_attr( $sc ); ?>" title="<?php echo esc_attr( $etip ); ?>">
 								<span class="vo-dot <?php echo esc_attr( $dot ); ?>"></span>
 								<span class="nm" title="<?php echo esc_attr( $src ); ?>"><?php echo esc_html( $src ); ?></span>
 								<span class="n"><b><?php echo esc_html( $source_counts[ $src ] ?? 0 ); ?></b> / <?php echo $err ? '<span style="color:#be123c;">hata</span>' : esc_html( null === $cand ? '-' : $cand ); ?></span>
