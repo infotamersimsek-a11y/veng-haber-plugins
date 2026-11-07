@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Oto Haber AI
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.62
+ * Version: 1.0.63
  * Author: Veng Haber
  */
 
@@ -1741,8 +1741,16 @@ function veng_oh_settings_page() {
 	?>
 	<div class="wrap">
 		<h1>Oto Haber AI</h1>
-		<p>RSS kaynaklarından haberleri çeker, Claude ile editöryel kurallara göre yeniden yazar, kategoriye göre yayınlar. Her 15 dakikada bir kendi kendine çalışır (site ziyaretiyle tetiklenir).</p>
+		<p>RSS kaynaklarından haberleri çeker, Claude ile editöryel kurallara göre yeniden yazar, kategoriye göre yayınlar. Saat başı kendi kendine çalışır (06:00–22:00 arası, site ziyaretiyle tetiklenir).</p>
 
+		<style>
+			.veng-oh-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:32px;align-items:start}
+			@media (max-width:1100px){.veng-oh-cols{grid-template-columns:minmax(0,1fr)}}
+			.veng-oh-cols .form-table th{width:130px;padding:12px 10px 12px 0}
+			.veng-oh-cols h2,.veng-oh-cols h3{margin-top:0}
+		</style>
+		<div class="veng-oh-cols">
+		<div>
 		<form method="post">
 			<?php wp_nonce_field( 'veng_oh_settings' ); ?>
 			<table class="form-table">
@@ -1777,7 +1785,8 @@ function veng_oh_settings_page() {
 			</p>
 		</form>
 		<?php veng_oh_render_usage(); ?>
-
+		</div>
+		<div>
 		<h2>Durum</h2>
 		<?php $last_api_error = get_option( 'veng_oh_last_api_error' ); ?>
 		<?php if ( $last_api_error && ! empty( $last_api_error['reason'] ) ) : ?>
@@ -1808,29 +1817,28 @@ function veng_oh_settings_page() {
 			return ( $source_counts[ $b ] ?? 0 ) <=> ( $source_counts[ $a ] ?? 0 );
 		} );
 		?>
-		<table class="widefat striped" style="max-width:900px;text-align:center;">
-			<thead><tr><th>Bugün eklenen</th><th>Kürt bölgesi</th><th>Dünya</th><th>Diğer</th><th>Bölge spor*</th><th>Toplam otomatik haber</th></tr></thead>
-			<tbody><tr>
-				<td><strong><?php echo esc_html( $dc['count'] ); ?> / <?php echo esc_html( VENG_OH_DAILY_CAP ); ?></strong></td>
-				<td><?php echo esc_html( $dc['kurdish'] ); ?> (hedef ≥<?php echo esc_html( VENG_OH_KURDISH_DAILY_MIN ); ?>)</td>
-				<td><?php echo esc_html( $dc['world'] ); ?> / <?php echo esc_html( VENG_OH_WORLD_DAILY_CAP ); ?></td>
-				<td><?php echo esc_html( $dc['other'] ); ?></td>
-				<td><?php echo esc_html( $dc['bolge_spor'] ?? 0 ); ?> / <?php echo esc_html( VENG_OH_REGIONAL_SPORTS_DAILY_CAP ); ?></td>
-				<td><?php echo null === $auto_post_count ? 'hesaplanıyor…' : esc_html( number_format_i18n( $auto_post_count ) ); ?></td>
-			</tr></tbody>
+		<table class="widefat striped">
+			<tbody>
+				<tr><td>Bugün eklenen</td><td><strong><?php echo esc_html( $dc['count'] ); ?> / <?php echo esc_html( VENG_OH_DAILY_CAP ); ?></strong></td></tr>
+				<tr><td>Kürt bölgesi</td><td><?php echo esc_html( $dc['kurdish'] ); ?> (hedef ≥<?php echo esc_html( VENG_OH_KURDISH_DAILY_MIN ); ?>)</td></tr>
+				<tr><td>Dünya</td><td><?php echo esc_html( $dc['world'] ); ?> / <?php echo esc_html( VENG_OH_WORLD_DAILY_CAP ); ?></td></tr>
+				<tr><td>Diğer</td><td><?php echo esc_html( $dc['other'] ); ?></td></tr>
+				<tr><td>Bölge spor*</td><td><?php echo esc_html( $dc['bolge_spor'] ?? 0 ); ?> / <?php echo esc_html( VENG_OH_REGIONAL_SPORTS_DAILY_CAP ); ?></td></tr>
+				<tr><td>Toplam otomatik haber</td><td><?php echo null === $auto_post_count ? 'hesaplanıyor…' : esc_html( number_format_i18n( $auto_post_count ) ); ?></td></tr>
+			</tbody>
 		</table>
 		<p class="description">* Amedspor/bölge kulüpleri, günlük 30 sınırının dışında ek hak. Saat başı çalışır (<?php echo esc_html( VENG_OH_ACTIVE_HOUR_START ); ?>:00–<?php echo esc_html( VENG_OH_ACTIVE_HOUR_END ); ?>:00), turda en fazla <?php echo esc_html( VENG_OH_RUN_CAP ); ?> haber. Sıradaki: <?php echo $next_cron ? esc_html( date_i18n( 'd.m.Y H:i', $next_cron ) ) : 'planlanmadı'; ?><?php echo $last ? ' · Son tarama: ' . esc_html( $last['time'] ) . ' (' . intval( $last['created'] ) . ' yeni)' : ' · Henüz tarama çalışmadı'; ?></p>
 
 		<h3 style="margin-bottom:6px;">Kaynaklar <span style="font-weight:400;font-size:12px;">(bugün yayın / son taramada aday)</span></h3>
-		<table class="widefat striped" style="max-width:900px;font-size:12.5px;">
+		<table class="widefat striped" style="font-size:12.5px;">
 			<tbody>
-			<?php foreach ( array_chunk( $known_sources, 3 ) as $row_sources ) : ?>
+			<?php foreach ( array_chunk( $known_sources, 2 ) as $row_sources ) : ?>
 				<tr>
 				<?php foreach ( $row_sources as $src ) : ?>
 					<td><?php echo esc_html( $src ); ?></td>
 					<td style="white-space:nowrap;"><strong><?php echo esc_html( $source_counts[ $src ] ?? 0 ); ?></strong> / <?php echo ! empty( $cand_by_src[ $src . '|err' ] ) ? '<span style="color:#991b1b;">alınamadı</span>' : esc_html( $cand_by_src[ $src ] ?? '-' ); ?></td>
 				<?php endforeach; ?>
-				<?php for ( $i = count( $row_sources ); $i < 3; $i++ ) : ?><td></td><td></td><?php endfor; ?>
+				<?php for ( $i = count( $row_sources ); $i < 2; $i++ ) : ?><td></td><td></td><?php endfor; ?>
 				</tr>
 			<?php endforeach; ?>
 			</tbody>
@@ -1863,6 +1871,8 @@ function veng_oh_settings_page() {
 			</table>
 			</details>
 		<?php endif; ?>
+		</div>
+		</div>
 	</div>
 	<?php
 }
