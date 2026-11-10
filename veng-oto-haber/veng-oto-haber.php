@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Oto Haber AI
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.68
+ * Version: 1.0.69
  * Author: Veng Haber
  */
 
@@ -423,6 +423,10 @@ function veng_oh_extract_image( $block ) {
 }
 
 function veng_oh_already_imported( $link ) {
+	$dups = get_option( 'veng_oh_dup_links', array() );
+	if ( is_array( $dups ) && isset( $dups[ $link ] ) && $dups[ $link ] > time() - 2 * DAY_IN_SECONDS ) {
+		return true;
+	}
 	$existing = get_posts( array(
 		'post_type'      => 'post',
 		'meta_key'       => '_veng_source_url',
@@ -466,6 +470,35 @@ function veng_oh_regional_voice_rule() {
  */
 function veng_oh_place_name_rule() {
 	return "- İL ADI KURALI (KESİN, İSTİSNASIZ): Şu il adlarını metinde ve başlıkta HER ZAMAN kısa/yerel adlarıyla yaz, resmi uzun adlarını ASLA kullanma: Kahramanmaraş değil 'Maraş', Gaziantep değil 'Antep', Şanlıurfa değil 'Urfa'. Bu, il adının TEK BAŞINA geçtiği her yerde değil, başka bir kelimeyle BİRLEŞİK geçtiği her yerde de geçerlidir — ör. kulüp/kurum/takım adları: 'Şanlıurfaspor' değil 'Urfaspor', 'Gaziantepspor' değil 'Antepspor', 'Kahramanmaraşspor' değil 'Maraşspor'. 'Şanlı', 'Gazi', 'Kahraman' gibi önekler hiçbir biçimde, hiçbir kelimenin içinde bile kullanılmaz. Bu kural her türlü haberde geçerlidir, hiçbir durumda bozulmaz.\n";
+}
+
+/**
+ * Site sahibinin kesin talimatı (2026-11-10): "terörsüz Türkiye" ve türevleri kullanılmaz,
+ * yerine "yeni çözüm süreci" denir. Hem istemde yasaklanır hem de çıktıya (ve eski yazılara)
+ * veng_oh_fix_terminology() ile uygulanır — model talimata uymasa bile ifade yayına çıkmaz.
+ */
+function veng_oh_terminology_rule() {
+	return "- Terminoloji (KESİN KURAL): \"terörsüz Türkiye\", \"terörsüz Türkiye süreci\" ve benzeri ifadeleri ASLA kullanma; kaynak metinde geçse bile kendi cümlende bunun yerine \"yeni çözüm süreci\" de (başlıkta da böyle). Yalnızca birinin doğrudan tırnak içindeki sözü bunun dışındadır.\n";
+}
+
+function veng_oh_fix_terminology( $text ) {
+	if ( ! is_string( $text ) || false === mb_stripos( $text, 'terörsüz' ) ) {
+		return $text;
+	}
+	$is_upper = function ( $w ) {
+		return mb_substr( $w, 0, 1 ) !== mb_strtolower( mb_substr( $w, 0, 1 ) );
+	};
+	return preg_replace_callback(
+		'/(terörsüz)\s+(t[üu]rk[iıİI]ye)(?:\s+(süre[çc]\p{L}*))?/iu',
+		function ( $m ) use ( $is_upper ) {
+			$yeni  = $is_upper( $m[1] ) ? 'Yeni' : 'yeni';
+			// "Türkiye" her zaman büyük yazılır; büyük harf ölçütü o yüzden "Süreç" kelimesi (başlık yazımı).
+			$cozum = ! empty( $m[3] ) && $is_upper( $m[3] ) ? 'Çözüm' : 'çözüm';
+			$surec = ! empty( $m[3] ) ? $m[3] : 'süreci';
+			return $yeni . ' ' . $cozum . ' ' . $surec;
+		},
+		$text
+	);
 }
 
 /** Resmi Anthropic key'i tanımlı mı. */
@@ -646,6 +679,7 @@ function veng_oh_editorial_rewrite( $item, $source ) {
 		. veng_oh_sports_hometown_rule()
 		. veng_oh_regional_voice_rule()
 		. veng_oh_place_name_rule()
+		. veng_oh_terminology_rule()
 		. "- Magazinsel/abartılı ifadelerden kaçın, gazetecilik standardına uygun ol.\n\n"
 		. 'Orijinal başlık: "' . $item['title'] . "\"\n"
 		. 'Orijinal özet: "' . mb_substr( $item['summary'], 0, 600 ) . "\"\n\n"
@@ -695,88 +729,6 @@ function veng_oh_editorial_rewrite( $item, $source ) {
 	// kaynakla AYNIYDI) — bu teknik bir yedek kontrol, sadece talimata güvenmiyoruz.
 	if ( veng_oh_too_similar( $item['title'], $parsed['title'], 85 ) || veng_oh_too_similar( $item['summary'], $parsed['content_html'], 65 ) ) {
 		veng_oh_log( 'Rewrite kaynağa çok benziyor (özgün değil), taslağa düşürüldü: ' . $parsed['title'] );
-		return null;
-	}
-	return $parsed;
-}
-
-/**
- * Aynı olayı farklı kaynaklardan anlatan haberleri harmanlayıp TEK, TAMAMEN ÖZGÜN bir
- * haber üretir. Amaç: aynı konunun her kaynak için ayrı ayrı haberleşmesini önlemek
- * (sunucuyu/kategori dengesini yormadan) ve Google'ın içeriği kopya değil yeni/özgün
- * algılamasını sağlamak — bu da görünürlük ve etkileşimi artırır.
- */
-function veng_oh_editorial_merge_rewrite( $story ) {
-	if ( ! veng_oh_claude_available() ) {
-		veng_oh_log( 'API anahtarı kayıtlı değil, harmanlanan haber yeniden yazılmadan (ilk kaynağın özetiyle) eklendi.' );
-		return null;
-	}
-
-	$sources_text = '';
-	foreach ( $story as $i => $c ) {
-		$sources_text .= ( $i + 1 ) . ') [' . $c['feed']['source'] . '] Başlık: "' . $c['item']['title'] . '"'
-			. ' Özet: "' . mb_substr( $c['item']['summary'], 0, 500 ) . "\"\n";
-	}
-
-	$prompt = "Aşağıda aynı olayı/konuyu farklı haber kaynaklarından anlatan " . count( $story ) . " farklı başlık ve özet var. Bunların TÜMÜNÜ oku, bilgileri harmanla ve Veng Haber editöryel kurallarına göre TEK, TAMAMEN ÖZGÜN bir haber yaz. Hiçbir kaynağın cümlesini veya başlığını birebir/yakın kopyalama; farklı kaynaklardaki bilgileri birleştirip kendi cümlelerinle yeni bir anlatım kur.\n\n"
-		. "Editöryel kurallar (BBC Türkçe tarzı hedeflenir):\n"
-		. "- Türkçe, ölçülü, sade, doğrudan haber dili kullan; resmi ama anlaşılır bir ton benimse.\n"
-		. "- İlk cümlede konunun özünü doğrudan ver (inverted pyramid); dramatik/duygusal sıfatlar, ünlem, abartı kullanma.\n"
-		. "- Hiçbir taraf/kişi/kurum/örgüt lehine veya aleyhine yorum, övgü ya da suçlama içermesin; yalnızca bilinen olguları aktar.\n"
-		. "- İddia/açıklama niteliğindeki ifadeleri \"iddia edildi\", \"açıklandı\", \"belirtildi\" gibi temkinli atıf kalıplarıyla ver, kesin doğru gibi sunma.\n"
-		. "- Kaynaklarda GEÇMEYEN hiçbir detay, sayı, isim veya alıntı uydurma; sadece verilen bilgiyle sınırlı kal. Bağlam/arka plan eklerken de aynı kural geçerli: sadece genel bilinen, tartışmasız arka plan bilgisi ekle, spekülasyon/tahmin/yorum katma.\n"
-		. "- Kaynaklarda geçen sayıları (skor, tarih, miktar, yaş, istatistik vb.) OLDUĞU GİBİ koru, değiştirme; kaynaklar arasında sayı çelişkisi varsa en güncel/çok tekrarlanan kaynağı esas al.\n"
-		. veng_oh_sports_hometown_rule()
-		. veng_oh_regional_voice_rule()
-		. veng_oh_place_name_rule()
-		. "- Magazinsel/abartılı ifadelerden kaçın, gazetecilik standardına uygun ol.\n\n"
-		. $sources_text . "\n"
-		. "Şunu JSON olarak döndür (başka hiçbir şey yazma):\n"
-		. '{"title": "...", "summary": "...", "content_html": "<p>...</p><p>...</p><p>...</p>"}' . "\n"
-		. 'content_html en az 3-4 paragraf olsun — tüm kaynaklardaki bilgileri birleştirip detaylandır, sadece tek cümleyi tekrar etme; başlık ve içerik hiçbir kaynaktaki başlık/cümleyle aynı olmasın.';
-
-	$res = veng_oh_call_claude( array(
-		'model'      => 'claude-sonnet-5',
-		'max_tokens' => 3072,
-		'messages'   => array( array( 'role' => 'user', 'content' => $prompt ) ),
-	), 45, 'harman' );
-
-	if ( is_wp_error( $res ) ) {
-		veng_oh_log( 'Anthropic harman isteği başarısız: ' . $res->get_error_message() );
-		veng_oh_record_api_error( $res->get_error_message() );
-		return null;
-	}
-	if ( wp_remote_retrieve_response_code( $res ) !== 200 ) {
-		veng_oh_log( 'Anthropic API (harman) ' . wp_remote_retrieve_response_code( $res ) . ': ' . wp_remote_retrieve_body( $res ) );
-		veng_oh_record_api_error( wp_remote_retrieve_response_code( $res ) . ': ' . wp_remote_retrieve_body( $res ) );
-		return null;
-	}
-
-	$data = json_decode( wp_remote_retrieve_body( $res ), true );
-	$text = '';
-	foreach ( (array) ( $data['content'] ?? array() ) as $block ) {
-		if ( isset( $block['type'] ) && 'text' === $block['type'] ) {
-			$text = $block['text'];
-			break;
-		}
-	}
-	if ( ! preg_match( '/\{[\s\S]*\}/', $text, $m ) ) {
-		veng_oh_log( 'AI harman yanıtından JSON çıkarılamadı: ' . mb_substr( $text, 0, 200 ) );
-		return null;
-	}
-	$parsed = json_decode( $m[0], true );
-	if ( empty( $parsed['title'] ) || empty( $parsed['content_html'] ) ) {
-		return null;
-	}
-	// Tek, aşırı yoğun bir cümleden ibaret "makale" (kaynak çok kısaysa olabiliyor) okunurluğu
-	// bozuyor — en az 2 paragraflık gerçek içerik yoksa başarısız say, ham veri yayınlanmasın.
-	if ( mb_strlen( wp_strip_all_tags( $parsed['content_html'] ) ) < 300 ) {
-		return null;
-	}
-	// Birincil kaynakla (ilk sıradaki) neredeyse birebir aynıysa harman gerçekleşmemiş demektir.
-	$primary = $story[0]['item'];
-	if ( veng_oh_too_similar( $primary['title'], $parsed['title'], 85 ) || veng_oh_too_similar( $primary['summary'], $parsed['content_html'], 65 ) ) {
-		veng_oh_log( 'Harman kaynağa çok benziyor (özgün değil), taslağa düşürüldü: ' . $parsed['title'] );
 		return null;
 	}
 	return $parsed;
@@ -881,19 +833,41 @@ function veng_oh_resolve_category_by_slug( $slug ) {
 }
 
 /** Tek kaynaklı eski çağrı şekli — geriye dönük uyumluluk için (acil kategori doldurma bunu kullanıyor). */
+/** Aynı olayı anlatan ve yayınlanan haberin kaynağıyla birlikte ELENEN diğer kaynak linklerini 2 gün boyunca "zaten işlendi" sayar. */
+function veng_oh_mark_duplicates( $members ) {
+	if ( ! $members ) {
+		return;
+	}
+	$dups = get_option( 'veng_oh_dup_links', array() );
+	$dups = is_array( $dups ) ? $dups : array();
+	$now  = time();
+	foreach ( $dups as $l => $t ) {
+		if ( $t < $now - 2 * DAY_IN_SECONDS ) {
+			unset( $dups[ $l ] );
+		}
+	}
+	foreach ( $members as $c ) {
+		$dups[ $c['item']['link'] ] = $now;
+	}
+	update_option( 'veng_oh_dup_links', array_slice( $dups, -400, null, true ), false );
+}
+
 function veng_oh_import_item( $item, $feed ) {
 	return veng_oh_import_story( array( array( 'item' => $item, 'feed' => $feed ) ) );
 }
 
 /**
  * Bir "hikâye" (aynı olayı anlatan 1 veya daha fazla kaynak) içe aktarır. Birden fazla
- * kaynak varsa veng_oh_editorial_merge_rewrite() hepsini harmanlayıp TEK özgün haber
- * üretir — aynı konunun kaynak başına ayrı ayrı haberleşmesini (Google'da tekrar içerik
- * gibi görünmesini) önler. Gruptaki TÜM kaynak linkleri _veng_source_url meta'sına ayrı
- * ayrı eklenir, böylece ileride bu olayı farklı bir kaynaktan tekrar çeken bir tur onu
- * "zaten eklenmiş" sayıp ikinci kez haberleştirmez.
+ * kaynak varsa yalnızca İLK (çapa) kaynak yeniden yazılır, diğerleri tekrar haberleşmesin
+ * diye 2 gün boyunca "işlendi" işaretlenir (bkz. veng_oh_mark_duplicates).
  */
 function veng_oh_import_story( $story ) {
+	// Birden fazla kaynağı tek habere HARMANLAMAK kaldırıldı (ilgisiz haberleri karıştırma ve
+	// yanlış fotoğraf riski). Hikâyenin ilk (çapa) kaynağı tek başına yeniden yazılır; aynı olayı
+	// anlatan diğer üyeler yalnızca tekrar haberleşmesin diye işaretlenir.
+	$dups  = array_slice( $story, 1 );
+	$story = array( $story[0] );
+
 	foreach ( $story as $c ) {
 		if ( veng_oh_already_imported( $c['item']['link'] ) ) {
 			return false;
@@ -924,13 +898,11 @@ function veng_oh_import_story( $story ) {
 
 	$sources_label = implode( ', ', array_unique( array_map( function ( $c ) { return $c['feed']['source']; }, $story ) ) );
 
-	$draft = count( $story ) > 1
-		? veng_oh_editorial_merge_rewrite( $story )
-		: veng_oh_editorial_rewrite( $primary['item'], $primary['feed']['source'] );
+	$draft = veng_oh_editorial_rewrite( $primary['item'], $primary['feed']['source'] );
 	if ( $draft ) {
-		$title = $draft['title'];
-		$excerpt = mb_substr( $draft['summary'] ?: $excerpt, 0, 300 );
-		$body_html = $draft['content_html'];
+		$title = veng_oh_fix_terminology( $draft['title'] );
+		$excerpt = mb_substr( veng_oh_fix_terminology( $draft['summary'] ?: $excerpt ), 0, 300 );
+		$body_html = veng_oh_fix_terminology( $draft['content_html'] );
 	}
 
 	$attribution = '<p><em>Güncel Haber Kaynak: ' . esc_html( $sources_label ) . '</em></p>';
@@ -961,6 +933,7 @@ function veng_oh_import_story( $story ) {
 		add_post_meta( $post_id, '_veng_source_url', $c['item']['link'] );
 	}
 	update_post_meta( $post_id, '_veng_source_name', $sources_label );
+	veng_oh_mark_duplicates( $dups );
 
 	$image = '';
 	foreach ( $story as $c ) {
@@ -975,6 +948,56 @@ function veng_oh_import_story( $story ) {
 
 	return $post_id;
 }
+
+/**
+ * Eski yazılardaki "terörsüz Türkiye" ifadelerini toplu ama ARKA PLANDA (wp-cron) düzeltir:
+ * her turda en fazla 100 yazı, ID imleciyle ilerler (sonsuz döngü olmaz), sadece başlık,
+ * özet ve içerikte o ifadeyi değiştirir, başka hiçbir şeye dokunmaz. Bitince bayrak set edilir.
+ */
+function veng_oh_run_terms_cleanup() {
+	global $wpdb;
+	$cursor = (int) get_option( 'veng_oh_terms_cursor', 0 );
+	$like   = '%terörsüz%türkiye%';
+	$rows   = $wpdb->get_results( $wpdb->prepare(
+		"SELECT ID, post_title, post_excerpt, post_content FROM {$wpdb->posts}
+		 WHERE ID > %d AND post_type IN ('post','makale') AND post_status IN ('publish','draft','pending','future')
+		 AND ( post_title LIKE %s OR post_excerpt LIKE %s OR post_content LIKE %s )
+		 ORDER BY ID ASC LIMIT 100",
+		$cursor, $like, $like, $like
+	) );
+	$changed = 0;
+	foreach ( $rows as $r ) {
+		$new = array(
+			'post_title'   => veng_oh_fix_terminology( $r->post_title ),
+			'post_excerpt' => veng_oh_fix_terminology( $r->post_excerpt ),
+			'post_content' => veng_oh_fix_terminology( $r->post_content ),
+		);
+		if ( $new['post_title'] !== $r->post_title || $new['post_excerpt'] !== $r->post_excerpt || $new['post_content'] !== $r->post_content ) {
+			$wpdb->update( $wpdb->posts, $new, array( 'ID' => $r->ID ) );
+			clean_post_cache( $r->ID );
+			$changed++;
+		}
+		$cursor = (int) $r->ID;
+	}
+	update_option( 'veng_oh_terms_cursor', $cursor, false );
+	update_option( 'veng_oh_terms_changed', (int) get_option( 'veng_oh_terms_changed', 0 ) + $changed, false );
+	if ( $changed && function_exists( 'veng_cache_clear' ) ) {
+		veng_cache_clear();
+	}
+	if ( count( $rows ) >= 100 ) {
+		wp_schedule_single_event( time() + 60, 'veng_oh_terms_cleanup_event' );
+	} else {
+		update_option( 'veng_oh_terms_done', '1' );
+	}
+}
+add_action( 'veng_oh_terms_cleanup_event', 'veng_oh_run_terms_cleanup' );
+
+function veng_oh_maybe_schedule_terms_cleanup() {
+	if ( '1' !== get_option( 'veng_oh_terms_done' ) && ! wp_next_scheduled( 'veng_oh_terms_cleanup_event' ) ) {
+		wp_schedule_single_event( time() + 30, 'veng_oh_terms_cleanup_event' );
+	}
+}
+add_action( 'init', 'veng_oh_maybe_schedule_terms_cleanup' );
 
 /** Feed'deki görsel URL'ini indirip kapak görseli olarak ayarlar; başarısız olursa sessizce geçilir. */
 /** .jfif WP'nin varsayılan izinli mime listesinde yok — media_sideload_image() bu yüzden reddediyordu. */
