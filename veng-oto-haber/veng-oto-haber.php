@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Oto Haber AI
  * Description: RSS kaynaklarından otomatik haber çeker, Claude ile editöryel kurallara göre yeniden yazar ve yayınlar. Tema bağımsız çalışır, hangi tema aktif olursa olsun devam eder.
- * Version: 1.0.67
+ * Version: 1.0.68
  * Author: Veng Haber
  */
 
@@ -1355,7 +1355,7 @@ function veng_oh_group_and_pick_stories( $candidates, $limit ) {
 		$list .= "\n";
 	}
 
-	$prompt = "Aşağıda bu saat içinde yayına aday " . count( $candidates ) . " haber başlığı var. Farklı kaynaklardan gelen ama AYNI olayı/konuyu anlatan başlıkları aynı grupta topla (ör. 3 farklı kaynak aynı saldırıyı/açıklamayı farklı başlıklarla veriyorsa bunlar bir grup). Konusu farklı olanları tek başına kendi grubunda bırak.\n\n"
+	$prompt = "Aşağıda bu saat içinde yayına aday " . count( $candidates ) . " haber başlığı var. Farklı kaynaklardan gelen ama AYNI olayı/konuyu anlatan başlıkları aynı grupta topla (ör. 3 farklı kaynak aynı saldırıyı/açıklamayı farklı başlıklarla veriyorsa bunlar bir grup). Konusu farklı olanları tek başına kendi grubunda bırak. ÖNEMLİ: Bir gruba SADECE aynı somut olayı/açıklamayı anlatanlar girer; aynı geniş başlık altında olsalar bile (ör. hepsi 'çözüm süreci' ile ilgili) farklı olaylar, farklı kişilerin açıklamaları ya da farklı yerlerde yaşananlar AYRI gruptadır. Emin değilsen ayrı bırak. Bir grupta en fazla 3 başlık olsun.\n\n"
 		. "Sonra grupları editöryel önceliğe göre sırala ve en öncelikli {$limit} grubu seç.\n"
 		. "Öncelik ver (yüksekten düşüğe):\n"
 		. "1) Kürt coğrafyasını (Diyarbakır, Mardin, Batman, Urfa/Şanlıurfa, Van, Hakkari, Şırnak, Siirt, Ağrı, Muş, Bitlis gibi doğu/güneydoğu illeri) ve Kürtlerle ilgili HER konudaki haberler (siyaset, kültür-sanat, toplum, ekonomi, SPOR dahil — özellikle Amedspor ve bölge kulüpleri maç/transfer haberleri de buraya girer, rutin spor sayılmaz) — bu sitenin ana odağı, bunlara geniş yer ver. AMA il bazlı yerel kaynaklardan (Van Haber Merkezi, Wan Haber, Mardin GZT, Mardin Haber, Şanlıurfa Gazetesi, Batman Burada, Batman Pusula, Çolemêrg Haber, Şırnak Haber73, Siirt'te Sonsöz, Ağrı04Haber, Haber49, Bitlis Haber13) gelen haberlerde ÖNEMLİ/GERÇEK haber ile BASİT/RUTİN duyuruyu ayır: can kaybı, yaralanma, trafik kazası, doğal afet (sel, fırtına, deprem vb.), önemli bir maç/turnuva SONUCU (galibiyet/final/şampiyonluk gibi somut başarı) önceliklidir; sadece 'katıldı', 'temsil ediyor', 'başarı diledi', kutlama/duyuru mesajı türünden, haber değeri düşük, ana akımın her gün yayınladığı türden basit anonsları SEÇME — bu site ana akım yerel basın gibi her küçük duyuruyu haberleştirmez.\n"
@@ -1408,7 +1408,7 @@ function veng_oh_group_and_pick_stories( $candidates, $limit ) {
 			}
 		}
 		if ( $story ) {
-			$stories[] = $story;
+			$stories[] = veng_oh_keep_coherent_members( $story );
 		}
 		if ( count( $stories ) >= $limit ) {
 			break;
@@ -1416,6 +1416,46 @@ function veng_oh_group_and_pick_stories( $candidates, $limit ) {
 	}
 
 	return $stories ? $stories : $fallback;
+}
+
+/** Karşılaştırma için anlamlı kelime kökleri (ilk 5 harf: Türkçe ekleri yutar), yaygın sözcükler hariç. */
+function veng_oh_topic_stems( $item ) {
+	static $stop = array( 'açıkl', 'söyle', 'belir', 'ilişk', 'kapsa', 'ardın', 'sonra', 'türki', 'olara', 'yapıl', 'yaptı', 'önemli', 'bilgi', 'başka', 'hakkı', 'ilgil', 'birlik', 'başka', 'cumhu', 'ifade', 'dikka', 'görev', 'değer', 'yönel', 'ortay', 'güncel', 'haber', 'sürec', 'süreç', 'konuş', 'konus', 'oldu', 'daha', 'kamuo', 'demok', 'toplu', 'barış', 'hükü', 'siyas', 'parti', 'devle', 'milli', 'meclis' );
+	$text  = mb_strtolower( $item['title'] . ' ' . ( $item['summary'] ?? '' ), 'UTF-8' );
+	$stems = array();
+	foreach ( preg_split( '/[^\p{L}\p{N}]+/u', $text, -1, PREG_SPLIT_NO_EMPTY ) as $w ) {
+		if ( mb_strlen( $w ) < 5 ) {
+			continue;
+		}
+		$s = mb_substr( $w, 0, 5 );
+		if ( ! in_array( $s, $stop, true ) ) {
+			$stems[ $s ] = true;
+		}
+	}
+	return $stems;
+}
+
+/**
+ * Gruplama yapay zekâsı "aynı olay" demesine rağmen alakasız haberleri birleştirebiliyor
+ * (ör. Şemdinli yıl dönümü + MİT Başkanı açıklaması + bir sanatçının başsağlığı haberi tek
+ * habere dönüşmüş, görsel de üçüncüsünden gelmişti). Çapa = grubun ilk üyesi; çapayla en az
+ * 2 ortak anlamlı kelime kökü paylaşmayan üyeler gruptan çıkarılır. Çıkarılanlar yayınlanmadığı
+ * için sonraki taramada kendi başlarına aday olarak yine değerlendirilir.
+ */
+function veng_oh_keep_coherent_members( $story ) {
+	if ( count( $story ) <= 1 ) {
+		return $story;
+	}
+	$anchor = veng_oh_topic_stems( $story[0]['item'] );
+	$kept   = array( $story[0] );
+	foreach ( array_slice( $story, 1, 2 ) as $c ) {
+		if ( count( array_intersect_key( $anchor, veng_oh_topic_stems( $c['item'] ) ) ) >= 2 ) {
+			$kept[] = $c;
+		} else {
+			veng_oh_log( 'Gruplama alakasız haberi gruptan çıkardı: "' . mb_substr( $c['item']['title'], 0, 70 ) . '" ≠ "' . mb_substr( $story[0]['item']['title'], 0, 70 ) . '"' );
+		}
+	}
+	return $kept;
 }
 
 /**
